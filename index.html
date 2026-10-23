@@ -262,8 +262,8 @@
 
       // PSU (Performance Stock Unit) 약정 설정: CL2 총 400주, CL3·4 총 600주 -> 2028·2029·2030년 10월에 1/3씩 분할 수령
       const [psuTotalShares, setPsuTotalShares] = useState(600); // 총 약정 주식 수 (CL3·4 기본 600주, CL2 400주)
-      // psuTaxMode: 'yearend_cash' (전량 입고 후 연말정산 시 현금에서 세금 차감 - 기본) vs 'stock_deduct' (세금만큼 주식수 선차감)
-      const [psuTaxMode, setPsuTaxMode] = useState('yearend_cash');
+      // psuTaxMode: 'opi1_cash' (다음 해 연말정산 시 OPI 1 현금에서 우선 차감 - 기본) vs 'opi2_stock' (다음 해 OPI 2 주식 수 차감 우선)
+      const [psuTaxMode, setPsuTaxMode] = useState('opi1_cash');
 
       // 5개년 연도별 영업이익 (조 원)
       const [opProfits, setOpProfits] = useState(SCENARIOS.default.profits);
@@ -418,34 +418,19 @@
             const immediateSellableValue = opi2TaxInfo.netStockValue * (1 / 3);
             const lockedStockValue = opi2TaxInfo.netStockValue * (2 / 3);
 
-            // 3. PSU (28·29·30년 10월 1/3씩 분할 수령, CL2 400주 / CL3·4 600주) 및 연말정산 세금 계산
-            // 연봉 + OPI 1 + OPI 2 합산 과표 위에서 PSU 수령분 한계세율(최고 54.467%) 산출
+            // 3. PSU (28·29·30년 10월 1/3씩 분할 수령, CL2 400주 / CL3·4 600주)
+            // 10월에 약정 주식은 세금 차감 없이 전량 입고되며, 해당 소득세는 '다음 해 연말정산'에서 OPI 1 현금 또는 OPI 2 주식 수 차감으로 정산됨 (2차 패스에서 반영)
+            // 연봉 + OPI 1 + OPI 2 합산 과표(PSU 수령 연도 기준) 위에서 PSU 수령분 한계세액 산출
             const psuTaxInfo = psuGrossValue > 0
               ? calcOPI1Tax(yearSalaryWon + opi1Gross + opi2Gross, psuGrossValue)
               : { totalTax: 0, netCash: 0, effectiveRate: 0 };
 
-            let psuReceivedShares = 0;
-            let psuTaxDeductedShares = 0;
-            let psuNetStockValue = 0;
-            let psuCashTaxDeduction = 0;
+            const psuReceivedShares = psuGrantedShares;
+            const psuNetStockValue = psuGrossValue;
+            const psuTaxDeductedShares = 0; // 다음 해 정산 시 OPI 2 주식 수에서 차감된 주식 수 (2차 패스에서 갱신)
+            const psuCashTaxDeduction = 0; // 다음 해 정산 시 OPI 1 현금에서 차감된 금액 (2차 패스에서 갱신)
 
-            if (psuGrantedShares > 0) {
-              if (psuTaxMode === 'yearend_cash') {
-                // 10월에 약정 주식 전량 입고 후, 연말정산 시 현금에서 세금 납부(차감)
-                psuReceivedShares = psuGrantedShares;
-                psuTaxDeductedShares = 0;
-                psuNetStockValue = psuGrossValue;
-                psuCashTaxDeduction = psuTaxInfo.totalTax;
-              } else {
-                // 세금만큼 주식 수를 줄여서 입고 (현금 차감 없음)
-                psuReceivedShares = yearStockPrice > 0 ? Math.floor((psuGrossValue - psuTaxInfo.totalTax) / yearStockPrice) : 0;
-                psuTaxDeductedShares = Math.max(0, psuGrantedShares - psuReceivedShares);
-                psuNetStockValue = psuReceivedShares * yearStockPrice;
-                psuCashTaxDeduction = 0;
-              }
-            }
-
-            // 통장 순현금 수령액 (주식 강제 매도 없이 순수 현금만 표시) = OPI 1 세후 현금 - PSU 연말정산 현금 세금 차감액
+            // 통장 순현금 수령액 (주식 강제 매도 없이 순수 현금만 표시) = OPI 1 세후 현금 - (전년도 PSU 연말정산 세금 중 현금 차감분)
             const finalNetBankCash = opi1TaxInfo.netCash - psuCashTaxDeduction;
 
             // 계좌 총 보유 주식 (OPI 2 세후 입고 주식 100% 전량 + PSU 입고 주식)
@@ -519,7 +504,55 @@
           };
         });
 
-        // 2차 패스: 연도별로 실제 매도 가능하게 풀리는(Unlock) OPI 2 주식 수 계산
+        // 2차 패스 A: 전년도 10월 PSU 수령분의 소득세를 '다음 해 연말정산'에서 정산
+        // - opi1_cash: OPI 1 현금(1월 말)에서 우선 차감, 부족분은 OPI 2 주식 수 차감
+        // - opi2_stock: OPI 2 주식(3월말~4월초 입고분) 수 차감 우선, 부족분은 OPI 1 현금에서 차감
+        years.forEach(yr => {
+          divisions.forEach(div => {
+            const cur = resultsByYear[yr].divisions[div.key];
+            const prev = resultsByYear[yr - 1] ? resultsByYear[yr - 1].divisions[div.key] : null;
+            const settleTax = prev ? prev.psuTax : 0;
+            const price = cur.yearStockPrice;
+            const availShares = cur.netReceivedShares;
+            let settleCash = 0;
+            let settleShares = 0;
+
+            if (settleTax > 0) {
+              if (psuTaxMode === 'opi1_cash') {
+                settleCash = Math.min(settleTax, cur.opi1NetCash);
+                const rem = settleTax - settleCash;
+                settleShares = price > 0 ? Math.min(availShares, Math.ceil(rem / price)) : 0;
+                settleCash += Math.max(0, rem - settleShares * price);
+              } else {
+                const wantShares = price > 0 ? Math.ceil(settleTax / price) : 0;
+                settleShares = Math.min(availShares, wantShares);
+                settleCash = Math.max(0, settleTax - settleShares * price);
+              }
+            }
+
+            cur.psuSettleTax = settleTax;
+            cur.psuSettleFromYear = settleTax > 0 ? yr - 1 : null;
+            cur.psuCashTaxDeduction = settleCash;
+            cur.psuTaxDeductedShares = settleShares;
+            cur.opi2SharesBeforePsuSettle = availShares;
+            cur.netReceivedShares = availShares - settleShares;
+
+            // OPI 2 독소조항 분할 재계산 (PSU 세금 정산 후 실제 남은 주식 기준)
+            cur.tranche1Shares = Math.floor(cur.netReceivedShares / 3);
+            cur.tranche2Shares = Math.floor(cur.netReceivedShares / 3);
+            cur.tranche3Shares = cur.netReceivedShares - cur.tranche1Shares - cur.tranche2Shares;
+            cur.lockedFromThisYearShares = cur.tranche2Shares + cur.tranche3Shares;
+            cur.immediateSellableValue = cur.tranche1Shares * price;
+            cur.lockedStockValue = cur.lockedFromThisYearShares * price;
+
+            cur.finalNetBankCash = cur.opi1NetCash - settleCash;
+            cur.totalRetainedShares = cur.netReceivedShares + cur.psuReceivedShares;
+            cur.totalRetainedStockValue = Math.max(0, cur.opi2NetStock - settleShares * price) + cur.psuNetStockValue;
+            cur.totalCombinedValue = cur.finalNetBankCash + cur.totalRetainedStockValue;
+          });
+        });
+
+        // 2차 패스 B: 연도별로 실제 매도 가능하게 풀리는(Unlock) OPI 2 주식 수 계산
         // yr년 매도가능 해제 물량 = 당해(yr) 수령분 즉시 1/3 + 전년도(yr-1) 수령분 1년후 해제 1/3 + 2년전(yr-2) 수령분 2년후 해제 1/3
         years.forEach(yr => {
           divisions.forEach(div => {
@@ -551,6 +584,7 @@
           let sumPsuGross = 0;
           let sumPsuTax = 0;
           let sumPsuCashTax = 0;
+          let sumPsuStockTaxShares = 0;
           let sumPsuReceivedShares = 0;
           let sumPsuStockValue = 0;
           let sumTotalTaxes = 0;
@@ -574,6 +608,7 @@
             sumPsuGross += data.psuGrossValue;
             sumPsuTax += data.psuTax;
             sumPsuCashTax += data.psuCashTaxDeduction;
+            sumPsuStockTaxShares += data.psuTaxDeductedShares;
             sumPsuReceivedShares += data.psuReceivedShares;
             sumPsuStockValue += data.psuNetStockValue;
             sumRetainedStock += data.totalRetainedStockValue;
@@ -612,6 +647,7 @@
             sumPsuGross,
             sumPsuTax,
             sumPsuCashTax,
+            sumPsuStockTaxShares,
             sumPsuReceivedShares,
             sumPsuStockValue,
             sumRetainedStock,
@@ -702,14 +738,14 @@
 - 적용 시나리오: ${SCENARIOS[selectedScenarioKey]?.name} (26년실적→27년수령 ${opProfits[2027]}조, 27년→28년 ${opProfits[2028]}조, 28년→29년 ${opProfits[2029]}조, 29년→30년 ${opProfits[2030]}조, 30년→31년 ${opProfits[2031]}조)
 - 2027년 시작 연봉: ${formatKoreanWon(baseSalaryWon)} (연 ${salaryGrowthRate}% 상승, 1.2억 원 샐러리캡 적용 → 2031년 ${formatKoreanWon(simulationData.resultsByYear[2031].yearSalaryWon)})
 - 삼성전자 주가: ${formatNumber(stockPrice)}원 (연 주가상승률 ${stockGrowthRate}%)
-- PSU 총 약정 주식: 총 ${psuTotalShares}주 (28·29·30년 10월 1/3씩 분할 수령, ${psuTaxMode === 'yearend_cash' ? '연말정산 현금 세금 차감' : '주식수 선차감'})
+- PSU 총 약정 주식: 총 ${psuTotalShares}주 (28·29·30년 10월 1/3씩 분할 수령, 10월 수령 시 세금 없음, 다음 해 연말정산에서 ${psuTaxMode === 'opi1_cash' ? 'OPI 1 현금 우선 차감(부족분 OPI 2 주식수 차감)' : 'OPI 2 주식수 우선 차감(부족분 OPI 1 현금 차감)'})
 
 [1. 메모리사업부 (인원: ${formatNumber(headcounts.memory)}명)]
 • 5개년 세후 총 수령 가치: ${formatKoreanWon(memCum.totalCombined)}
 • 통장 순현금 수령 총액 (OPI 1 세후 - PSU 연말정산 세금): ${formatKoreanWon(memCum.sumFinalNetCash)} (OPI 1 세후 원금 ${formatKoreanWon(memCum.sumOpi1Net)})
 • OPI 2 세후 입고 주식 총액 (주총 후 3월말~4월초 지급): ${formatKoreanWon(memCum.sumOpi2Net)} (입고 ${formatNumber(memCum.sumNetReceivedShares)}주 / 세금차감 ${formatNumber(memCum.sumTaxDeductedShares)}주)
   ↳ [독소조항 락업 현황(31년말 기준)] 매도가능(락업해제): ${formatNumber(memCum.sumUnlockedOpi2Shares)}주 / 2032~33년 매도제한 묶인 주식: ${formatNumber(memCum.sumStillLockedOpi2Shares)}주
-• PSU 약정 주식 (28~30년 10월 1/3씩): +${formatNumber(memCum.sumPsuReceivedShares)}주 입고 (연말정산 세금 -${formatKoreanWon(memCum.sumPsuCashTax)})
+• PSU 약정 주식 (28~30년 10월 1/3씩): +${formatNumber(memCum.sumPsuReceivedShares)}주 입고 (다음 해 연말정산: 현금 -${formatKoreanWon(memCum.sumPsuCashTax)} / OPI 2 주식 -${formatNumber(memCum.sumPsuStockTaxShares)}주)
 • 계좌 총 보유 주식 (OPI 2 100% + PSU): ${formatKoreanWon(memCum.finalRetainedStockEval)} (총 ${formatNumber(memCum.sumRetainedShares)}주 보유)
 
 [2. 공통부서 (인원: ${formatNumber(headcounts.common)}명)]
@@ -788,7 +824,7 @@
                       • <strong>OPI 2 매도제한(독소조항):</strong> 3월 말~4월 초 입고된 세후 순주식(45.533%)은 <strong>입고 즉시 1/3만 매도 가능</strong>하며, 나머지 <strong>1/3은 1년 후(이듬해 3~4월)</strong>, 마지막 <strong>1/3은 2년 후(2년 뒤 3~4월)</strong>에 매도 제한이 풀립니다.
                     </p>
                     <p className="text-purple-200/90">
-                      • <strong>PSU 약정 주식:</strong> 직급별 총 약정 주식(<strong>CL2 총 400주 / CL3·CL4 총 600주</strong>)을 <strong>2028년 10월, 2029년 10월, 2030년 10월에 1/3씩 분할 수령</strong>하며, 연말정산 시 현금에서 세금을 정산합니다.
+                      • <strong>PSU 약정 주식:</strong> 직급별 총 약정 주식(<strong>CL2 총 400주 / CL3·CL4 총 600주</strong>)을 <strong>2028년 10월, 2029년 10월, 2030년 10월에 1/3씩 분할 수령</strong>하며, 10월 수령 시에는 세금 차감 없이 전량 입고되고 <strong>다음 해 연말정산</strong> 때 OPI 1(현금) 또는 OPI 2(주식 수) 정산에서 세금이 차감됩니다.
                     </p>
                   </div>
                 </div>
@@ -1055,7 +1091,7 @@
                     <span className="px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 font-extrabold text-[11px] whitespace-nowrap">10월 (28~30년)</span>
                     <div>
                       <span className="font-bold text-purple-200 block text-[11px]">PSU 약정주식 1/3 분할입고</span>
-                      <span className="text-[10px] text-slate-400">CL2 400주 / CL3·4 600주 (연말정산 과세)</span>
+                      <span className="text-[10px] text-slate-400">CL2 400주 / CL3·4 600주 (세금은 다음 해 연말정산)</span>
                     </div>
                   </div>
                 </div>
@@ -1309,9 +1345,7 @@
                                 🎁 PSU 약정 주식 (28·29·30년 10월 1/3씩, 총 {formatNumber(psuTotalShares)}주)
                               </span>
                               <span className="text-[10px] text-purple-300/90">
-                                {psuTaxMode === 'yearend_cash'
-                                  ? `${formatNumber(cum.sumPsuReceivedShares)}주 입고 / 연말정산 세금 -${formatKoreanWon(cum.sumPsuCashTax)} 현금차감`
-                                  : `세금 차감 후 세후 ${formatNumber(cum.sumPsuReceivedShares)}주 입고`}
+                                {`${formatNumber(cum.sumPsuReceivedShares)}주 전량 입고 / 다음 해 연말정산: 현금 -${formatKoreanWon(cum.sumPsuCashTax)}${cum.sumPsuStockTaxShares > 0 ? ` · OPI 2 주식 -${formatNumber(cum.sumPsuStockTaxShares)}주` : ''}`}
                               </span>
                             </div>
                             <span className="font-bold text-purple-300 whitespace-nowrap ml-2">
@@ -1325,7 +1359,7 @@
                           <div>
                             <span className="font-bold block text-xs">통장 순현금 수령 합계 (주식 미매도 기준)</span>
                             <span className="text-[10px] opacity-80">
-                              (OPI 1 세후 현금{cum.sumPsuCashTax > 0 ? ` - PSU 연말정산 세금 ${formatKoreanWon(cum.sumPsuCashTax)}` : ''})
+                              (OPI 1 세후 현금{cum.sumPsuCashTax > 0 ? ` - 전년 PSU 연말정산 세금(현금분) ${formatKoreanWon(cum.sumPsuCashTax)}` : ''})
                             </span>
                           </div>
                           <div className="text-right">
@@ -1595,26 +1629,26 @@
                       </label>
                       <div className="grid grid-cols-2 gap-1.5">
                         <button
-                          onClick={() => setPsuTaxMode('yearend_cash')}
+                          onClick={() => setPsuTaxMode('opi1_cash')}
                           className={`p-1.5 rounded border text-[10px] font-medium transition ${
-                            psuTaxMode === 'yearend_cash'
+                            psuTaxMode === 'opi1_cash'
                               ? 'bg-purple-700 text-white border-purple-400'
                               : 'bg-navy-900 text-slate-400 border-slate-700 hover:text-white'
                           }`}
                         >
-                          연말정산 현금 차감 (기본)
-                          <span className="block text-[9px] opacity-80">1/3 전량입고·세금은 현금납부</span>
+                          OPI 1 정산 시 차감 (기본)
+                          <span className="block text-[9px] opacity-80">다음 해 1월 말 현금에서 차감 (부족분은 OPI 2 주식)</span>
                         </button>
                         <button
-                          onClick={() => setPsuTaxMode('stock_deduct')}
+                          onClick={() => setPsuTaxMode('opi2_stock')}
                           className={`p-1.5 rounded border text-[10px] font-medium transition ${
-                            psuTaxMode === 'stock_deduct'
+                            psuTaxMode === 'opi2_stock'
                               ? 'bg-purple-700 text-white border-purple-400'
                               : 'bg-navy-900 text-slate-400 border-slate-700 hover:text-white'
                           }`}
                         >
-                          주식 수 선차감 입고
-                          <span className="block text-[9px] opacity-80">세금만큼 주식수 차감(현금차감 X)</span>
+                          OPI 2 정산 시 차감
+                          <span className="block text-[9px] opacity-80">다음 해 3~4월 OPI 2 주식 수 차감 (부족분은 현금)</span>
                         </button>
                       </div>
                     </div>
@@ -2104,18 +2138,18 @@
                               ) : '-'}
                             </td>
                             <td className="p-3">
-                              {d.psuGrantedShares > 0 ? (
-                                <div>
-                                  <span className="text-purple-300 font-bold block">
-                                    +{formatNumber(d.psuReceivedShares)}주 ({formatKoreanWon(d.psuNetStockValue)})
-                                  </span>
-                                  {d.psuCashTaxDeduction > 0 ? (
-                                    <span className="text-[10px] text-red-400 block">
-                                      연말정산 세금 -{formatKoreanWon(d.psuCashTaxDeduction)}
+                              {(d.psuGrantedShares > 0 || d.psuSettleTax > 0) ? (
+                                <div className="space-y-0.5">
+                                  {d.psuGrantedShares > 0 && (
+                                    <span className="text-purple-300 font-bold block">
+                                      10월 +{formatNumber(d.psuReceivedShares)}주 ({formatKoreanWon(d.psuNetStockValue)})
                                     </span>
-                                  ) : (
-                                    <span className="text-[10px] text-slate-400 block">
-                                      (세금 {d.psuTaxDeductedShares}주 선차감)
+                                  )}
+                                  {d.psuSettleTax > 0 && (
+                                    <span className="text-[10px] text-red-400 block">
+                                      {String(d.psuSettleFromYear).slice(2)}년 PSU 연말정산 {formatKoreanWon(d.psuSettleTax)}:
+                                      {d.psuCashTaxDeduction > 0 ? ` 현금 -${formatKoreanWon(d.psuCashTaxDeduction)}` : ''}
+                                      {d.psuTaxDeductedShares > 0 ? ` 주식 -${formatNumber(d.psuTaxDeductedShares)}주` : ''}
                                     </span>
                                   )}
                                 </div>
