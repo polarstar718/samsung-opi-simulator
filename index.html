@@ -19,14 +19,15 @@
             samsung: {
               DEFAULT: '#1428A0',
               dark: '#0C1B6E',
-              light: '#233DD2',
+              light: '#2563EB',
               soft: '#E8EDFB',
             },
             navy: {
-              900: '#0B132B',
-              800: '#1C2541',
-              700: '#3A506B',
-              600: '#4F6D7A',
+              950: '#060A17',
+              900: '#0B1120',
+              800: '#131C31',
+              700: '#1E293B',
+              600: '#334155',
             }
           },
           fontFamily: {
@@ -45,22 +46,39 @@
   <style>
     body {
       font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-      background-color: #0B132B;
-      color: #F1F5F9;
+      background-color: #060A17;
+      background-image: radial-gradient(circle at 15% 0%, rgba(20, 40, 160, 0.22), transparent 38%),
+                        radial-gradient(circle at 85% 5%, rgba(59, 130, 246, 0.12), transparent 35%);
+      color: #F8FAFC;
+      letter-spacing: -0.015em;
+    }
+    .fintech-card {
+      background: rgba(19, 28, 49, 0.82);
+      backdrop-filter: blur(16px);
+      border: 1px solid rgba(148, 163, 184, 0.14);
+      box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+    }
+    .fintech-subcard {
+      background: rgba(11, 17, 32, 0.72);
+      border: 1px solid rgba(148, 163, 184, 0.12);
+    }
+    input[type="range"] {
+      height: 6px;
+      border-radius: 999px;
     }
     ::-webkit-scrollbar {
       width: 6px;
       height: 6px;
     }
     ::-webkit-scrollbar-track {
-      background: #1C2541;
+      background: #0B1120;
     }
     ::-webkit-scrollbar-thumb {
-      background: #3A506B;
+      background: #334155;
       border-radius: 3px;
     }
     ::-webkit-scrollbar-thumb:hover {
-      background: #4F6D7A;
+      background: #475569;
     }
   </style>
 </head>
@@ -258,9 +276,25 @@
       const [opi2Mode, setOpi2Mode] = useState('deduction');
 
       // UI 탭 및 모달 상태
+      const [myDivision, setMyDivision] = useState('memory'); // BonusCHIP 스타일 내 소속 사업부 하이라이트 ('memory', 'common', 'nonMemory')
       const [selectedDivisionTab, setSelectedDivisionTab] = useState('all'); // 'all', 'memory', 'common', 'nonMemory'
       const [showInfoModal, setShowInfoModal] = useState(false);
       const [toastMsg, setToastToast] = useState('');
+
+      // 계약연봉 직접 입력 핸들러 (만 원 단위, 입력 중에는 자유롭게 타이핑 허용 후 범위 보정)
+      const handleSalaryInputChange = (valStr) => {
+        if (valStr === '') {
+          setBaseSalaryManwon(5000);
+          return;
+        }
+        const num = Number(valStr);
+        if (!isNaN(num)) {
+          setBaseSalaryManwon(Math.min(12000, Math.max(0, num)));
+        }
+      };
+      const handleSalaryInputBlur = () => {
+        setBaseSalaryManwon(prev => Math.min(12000, Math.max(5000, Math.round(prev))));
+      };
 
       const showToast = (msg) => {
         setToastToast(msg);
@@ -664,6 +698,7 @@
         const nonCum = simulationData.cumulativeByDivision.nonMemory;
 
         const text = `[삼성전자 2027~2031년 수령 (2026~2030년 영업이익 재원) 성과급 5개년 시뮬레이션 요약]
+- 지급 일정: OPI 1(현금) 매년 1월 말 지급 / OPI 2(주식) 매년 주주총회 결의 후 3월 말~4월 초 지급 / PSU 28·29·30년 10월 1/3씩 지급
 - 적용 시나리오: ${SCENARIOS[selectedScenarioKey]?.name} (26년실적→27년수령 ${opProfits[2027]}조, 27년→28년 ${opProfits[2028]}조, 28년→29년 ${opProfits[2029]}조, 29년→30년 ${opProfits[2030]}조, 30년→31년 ${opProfits[2031]}조)
 - 2027년 시작 연봉: ${formatKoreanWon(baseSalaryWon)} (연 ${salaryGrowthRate}% 상승, 1.2억 원 샐러리캡 적용 → 2031년 ${formatKoreanWon(simulationData.resultsByYear[2031].yearSalaryWon)})
 - 삼성전자 주가: ${formatNumber(stockPrice)}원 (연 주가상승률 ${stockGrowthRate}%)
@@ -672,7 +707,7 @@
 [1. 메모리사업부 (인원: ${formatNumber(headcounts.memory)}명)]
 • 5개년 세후 총 수령 가치: ${formatKoreanWon(memCum.totalCombined)}
 • 통장 순현금 수령 총액 (OPI 1 세후 - PSU 연말정산 세금): ${formatKoreanWon(memCum.sumFinalNetCash)} (OPI 1 세후 원금 ${formatKoreanWon(memCum.sumOpi1Net)})
-• OPI 2 세후 입고 주식 총액: ${formatKoreanWon(memCum.sumOpi2Net)} (입고 ${formatNumber(memCum.sumNetReceivedShares)}주 / 세금차감 ${formatNumber(memCum.sumTaxDeductedShares)}주)
+• OPI 2 세후 입고 주식 총액 (주총 후 3월말~4월초 지급): ${formatKoreanWon(memCum.sumOpi2Net)} (입고 ${formatNumber(memCum.sumNetReceivedShares)}주 / 세금차감 ${formatNumber(memCum.sumTaxDeductedShares)}주)
   ↳ [독소조항 락업 현황(31년말 기준)] 매도가능(락업해제): ${formatNumber(memCum.sumUnlockedOpi2Shares)}주 / 2032~33년 매도제한 묶인 주식: ${formatNumber(memCum.sumStillLockedOpi2Shares)}주
 • PSU 약정 주식 (28~30년 10월 1/3씩): +${formatNumber(memCum.sumPsuReceivedShares)}주 입고 (연말정산 세금 -${formatKoreanWon(memCum.sumPsuCashTax)})
 • 계좌 총 보유 주식 (OPI 2 100% + PSU): ${formatKoreanWon(memCum.finalRetainedStockEval)} (총 ${formatNumber(memCum.sumRetainedShares)}주 보유)
@@ -691,8 +726,10 @@
         });
       };
 
+      const myCumData = simulationData.cumulativeByDivision[myDivision] || simulationData.cumulativeByDivision.memory;
+
       return (
-        <div className="min-h-screen flex flex-col bg-navy-900 text-slate-100">
+        <div className="min-h-screen flex flex-col text-slate-100">
           
           {/* Toast Notification */}
           {toastMsg && (
@@ -709,7 +746,7 @@
                 <div className="flex justify-between items-center pb-4 border-b border-slate-700">
                   <h3 className="text-xl font-bold text-white flex items-center gap-2">
                     <span className="p-1.5 bg-samsung rounded-lg text-white text-sm">삼성전자</span>
-                    2026년 5월 성과급 제도 개편안 안내
+                    2026년 5월 성과급 제도 개편안 & 지급 일정 안내
                   </h3>
                   <button 
                     onClick={() => setShowInfoModal(false)}
@@ -721,26 +758,26 @@
                 
                 <div className="mt-4 space-y-4 text-sm text-slate-300 leading-relaxed">
                   <div className="p-4 bg-navy-900/60 rounded-xl border border-slate-700">
-                    <h4 className="font-bold text-blue-400 text-base mb-1">핵심 골자: OPI 1 + OPI 2 구조</h4>
+                    <h4 className="font-bold text-blue-400 text-base mb-1">핵심 골자: OPI 1 + OPI 2 구조 및 지급 시점</h4>
                     <p>
                       기존 EVA 기준에서 탈피하여 <strong>연간 영업이익의 10.5%</strong>를 전체 성과급 재원으로 설정합니다.
-                      이 재원을 <strong>공통 재원 40%</strong>와 <strong>메모리 전용 재원 60%</strong>로 분할 배정합니다.
+                      1인당 배정 비율은 <strong>[메모리 100% : 공통 70% : 비메모리 40%]</strong>로 차등 배분됩니다.
                     </p>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div className="p-3 bg-navy-900/40 rounded-xl border border-slate-700">
-                      <span className="font-bold text-emerald-400 block mb-1">💵 OPI 1 (기존 현금 성과급)</span>
+                      <span className="font-bold text-emerald-400 block mb-1">💵 OPI 1 (1월 말 현금 지급)</span>
                       <p className="text-xs text-slate-400">
-                        영업이익 규모와 관계없이 1인당 배정액 중 <strong>계약연봉의 최대 50%</strong>까지 현금으로 지급됩니다.
+                        영업이익 규모와 관계없이 1인당 배정액 중 <strong>계약연봉(최대 1.2억 Cap)의 50%</strong>까지 이듬해 <strong>1월 말</strong> 현금으로 지급됩니다.
                         근로소득 종합과세 과표구간에 따른 누진세율이 원천징수되어 현금 입금됩니다.
                       </p>
                     </div>
                     <div className="p-3 bg-navy-900/40 rounded-xl border border-slate-700">
-                      <span className="font-bold text-amber-400 block mb-1">📈 OPI 2 (초과 주식 성과급)</span>
+                      <span className="font-bold text-amber-400 block mb-1">📈 OPI 2 (주총 후 3월 말~4월 초 주식 지급)</span>
                       <p className="text-xs text-slate-400">
-                        <strong>영업이익 100조 원 초과 달성 시에만 발동</strong>되며 자사주로 지급됩니다.
-                        세금(소득세 45% + 지방세 4.5% + 건보료 4.967% = <strong>54.467%</strong>)은 현금으로 내는 것이 아니라 <strong>그만큼 주식 수를 줄여서 선공제</strong>하고 <strong>세후 순주식(45.533%)</strong>으로 계좌에 입고됩니다.
+                        <strong>영업이익 100조 원 초과 달성 시에만 발동</strong>되며, 정기 <strong>주주총회 결의 후 3월 말~4월 초</strong>에 자사주로 지급됩니다.
+                        세금(<strong>54.467%</strong>)만큼 주식 수를 줄여서 선공제하고 <strong>세후 순주식(45.533%)</strong>으로 계좌에 입고됩니다.
                       </p>
                     </div>
                   </div>
@@ -748,7 +785,7 @@
                   <div className="p-4 bg-blue-950/40 border border-blue-800/60 rounded-xl text-xs space-y-1.5">
                     <h5 className="font-bold text-blue-300 text-sm">🔒 OPI 2 매도제한 독소조항 (즉시 1/3 · 1년후 1/3 · 2년후 1/3) & PSU 분할 수령</h5>
                     <p className="text-blue-100/90">
-                      • <strong>OPI 2 매도제한(독소조항):</strong> 세금(54.467%) 선공제 후 계좌에 입고된 세후 순주식(45.533%)은 <strong>수령 즉시 1/3만 매도 가능</strong>하며, 나머지 <strong>1/3은 1년 후</strong>, 마지막 <strong>1/3은 2년 후</strong>에야 매도 제한이 풀립니다. (주식을 강제 매도하여 현금에 합산하지 않고, 순수 현금과 보유 주식을 분리 표시합니다.)
+                      • <strong>OPI 2 매도제한(독소조항):</strong> 3월 말~4월 초 입고된 세후 순주식(45.533%)은 <strong>입고 즉시 1/3만 매도 가능</strong>하며, 나머지 <strong>1/3은 1년 후(이듬해 3~4월)</strong>, 마지막 <strong>1/3은 2년 후(2년 뒤 3~4월)</strong>에 매도 제한이 풀립니다.
                     </p>
                     <p className="text-purple-200/90">
                       • <strong>PSU 약정 주식:</strong> 직급별 총 약정 주식(<strong>CL2 총 400주 / CL3·CL4 총 600주</strong>)을 <strong>2028년 10월, 2029년 10월, 2030년 10월에 1/3씩 분할 수령</strong>하며, 연말정산 시 현금에서 세금을 정산합니다.
@@ -768,26 +805,26 @@
             </div>
           )}
 
-          {/* Top Global Navigation Bar */}
-          <header className="bg-navy-800/90 backdrop-blur border-b border-slate-700/80 sticky top-0 z-40 px-4 lg:px-8 py-3.5">
+          {/* Top Global Navigation Bar (BonusCHIP Inspired Sleek Header) */}
+          <header className="bg-navy-950/85 backdrop-blur-md border-b border-slate-800/90 sticky top-0 z-40 px-4 lg:px-8 py-3">
             <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
               
               {/* Brand Title */}
               <div className="flex items-center space-x-3">
-                <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-samsung to-blue-500 flex items-center justify-center shadow-lg shadow-blue-900/30 font-black text-white text-lg">
-                  S
+                <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-samsung via-blue-600 to-cyan-400 flex items-center justify-center shadow-lg shadow-blue-900/40 font-black text-white text-base">
+                  DS
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <h1 className="text-lg font-bold text-white tracking-tight">
-                      삼성전자 성과급 5개년 시뮬레이터
+                    <h1 className="text-base sm:text-lg font-extrabold text-white tracking-tight">
+                      삼성전자 보상 시뮬레이터 <span className="text-blue-400 font-black">PRO</span>
                     </h1>
-                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-samsung/40 text-blue-300 border border-blue-500/40">
-                      2027 ~ 2031
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/40">
+                      2027 ~ 2031 수령
                     </span>
                   </div>
-                  <p className="text-xs text-slate-400">
-                    영업이익 10.5% (OPI 1 + OPI 2 독소조항 1/3·1년·2년 락업) & PSU (CL2 400주 / CL3·4 600주 1/3 분할) 계산기
+                  <p className="text-[11px] text-slate-400">
+                    1월 말 OPI 1(현금) · 3월 말~4월 초 주총 후 OPI 2(주식·독소조항) · 10월 PSU(1/3 분할) 정밀 계산기
                   </p>
                 </div>
               </div>
@@ -796,19 +833,19 @@
               <div className="flex items-center flex-wrap gap-2 text-xs font-medium">
                 <button
                   onClick={() => setShowInfoModal(true)}
-                  className="px-3 py-2 bg-navy-700 hover:bg-slate-700 text-slate-200 rounded-lg border border-slate-600 transition flex items-center gap-1.5"
+                  className="px-3 py-2 bg-slate-800/90 hover:bg-slate-700 text-slate-200 rounded-xl border border-slate-700 transition flex items-center gap-1.5"
                 >
-                  <span>📘</span> 개편안 기준 상세
+                  <span>📘</span> 제도·일정 안내
                 </button>
                 <button
                   onClick={handleCopySummary}
-                  className="px-3 py-2 bg-navy-700 hover:bg-slate-700 text-slate-200 rounded-lg border border-slate-600 transition flex items-center gap-1.5"
+                  className="px-3 py-2 bg-slate-800/90 hover:bg-slate-700 text-slate-200 rounded-xl border border-slate-700 transition flex items-center gap-1.5"
                 >
-                  <span>📋</span> 요약 복사
+                  <span>📋</span> 결과 요약 복사
                 </button>
                 <button
                   onClick={handleExportCSV}
-                  className="px-3.5 py-2 bg-samsung hover:bg-samsung-light text-white font-semibold rounded-lg shadow transition flex items-center gap-1.5"
+                  className="px-3.5 py-2 bg-gradient-to-r from-samsung to-blue-600 hover:from-blue-700 hover:to-blue-500 text-white font-semibold rounded-xl shadow-md shadow-blue-950/50 transition flex items-center gap-1.5"
                 >
                   <span>📊</span> CSV 다운로드
                 </button>
@@ -819,11 +856,216 @@
 
           {/* Main Layout Container */}
           <main className="max-w-7xl mx-auto w-full px-4 lg:px-8 py-6 space-y-6 flex-1">
-            
+
+            {/* ===================================================================== */}
+            {/* [BonusCHIP 스타일] 0. 내 프로필 & 계약연봉 직접 입력 퀵 바 + 연간 지급 타임라인 */}
+            {/* ===================================================================== */}
+            <section className="fintech-card rounded-2xl p-5 space-y-4">
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-center">
+                
+                {/* 좌측: 내 소속 사업부 · 직급(PSU) · 계약연봉 직접 입력 */}
+                <div className="lg:col-span-8 space-y-3.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="px-2 py-0.5 rounded-md bg-blue-500/20 border border-blue-400/40 text-blue-300 text-[11px] font-bold">
+                        MY PROFILE
+                      </span>
+                      <h2 className="text-sm sm:text-base font-bold text-white">
+                        내 소속 사업부 · 계약연봉 직접 입력 · 직급(PSU) 빠른 설정
+                      </h2>
+                    </div>
+                    <span className="text-[11px] text-slate-400">
+                      연봉 5,000만 ~ 12,000만 원(1.2억 샐러리캡) 직접 입력 가능
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    {/* 1) 내 사업부 선택 */}
+                    <div className="fintech-subcard rounded-xl p-3 space-y-2">
+                      <div className="flex justify-between items-center text-[11px] text-slate-400">
+                        <span className="font-semibold text-slate-300">① 내 소속 사업부</span>
+                        <span className="text-blue-400 font-bold">100 : 70 : 40</span>
+                      </div>
+                      <div className="grid grid-cols-3 gap-1">
+                        {[
+                          { key: 'memory', label: '메모리', sub: '100%' },
+                          { key: 'common', label: '공통', sub: '70%' },
+                          { key: 'nonMemory', label: '비메모리', sub: '40%' }
+                        ].map(d => (
+                          <button
+                            key={d.key}
+                            onClick={() => setMyDivision(d.key)}
+                            className={`py-1.5 px-1 rounded-lg border text-center transition ${
+                              myDivision === d.key
+                                ? 'bg-blue-600/90 border-blue-400 text-white font-bold shadow'
+                                : 'bg-navy-950/70 border-slate-800 text-slate-400 hover:text-white'
+                            }`}
+                          >
+                            <span className="text-xs block">{d.label}</span>
+                            <span className="text-[9px] opacity-80 block">{d.sub}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* 2) 나의 2027 시작 계약연봉 직접 입력 */}
+                    <div className="fintech-subcard rounded-xl p-3 space-y-2">
+                      <div className="flex justify-between items-center text-[11px]">
+                        <span className="font-semibold text-slate-300">② 계약연봉 직접 입력</span>
+                        <span className="text-emerald-400 font-bold">OPI1 Cap {formatKoreanWon(opi1CapWon)}</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => setBaseSalaryManwon(prev => Math.max(5000, prev - 100))}
+                          className="px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700"
+                          title="-100만 원"
+                        >
+                          -100
+                        </button>
+                        <div className="relative flex-1">
+                          <input
+                            type="number"
+                            min="5000"
+                            max="12000"
+                            step="10"
+                            value={baseSalaryManwon}
+                            onChange={(e) => handleSalaryInputChange(e.target.value)}
+                            onBlur={handleSalaryInputBlur}
+                            className="w-full bg-navy-950 border border-blue-500/60 focus:border-blue-400 rounded-lg pl-2.5 pr-10 py-1.5 text-right font-extrabold text-white text-sm focus:outline-none"
+                          />
+                          <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[11px] text-slate-400 font-semibold">
+                            만원
+                          </span>
+                        </div>
+                        <button
+                          onClick={() => setBaseSalaryManwon(prev => Math.min(12000, prev + 100))}
+                          className="px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700"
+                          title="+100만 원"
+                        >
+                          +100
+                        </button>
+                      </div>
+                      <div className="flex justify-between gap-1">
+                        {[7000, 8500, 10000, 12000].map(preset => (
+                          <button
+                            key={preset}
+                            onClick={() => setBaseSalaryManwon(preset)}
+                            className={`flex-1 py-0.5 rounded text-[10px] font-semibold border transition ${
+                              baseSalaryManwon === preset
+                                ? 'bg-blue-600/40 border-blue-400 text-blue-200'
+                                : 'bg-navy-950/60 border-slate-800 text-slate-400 hover:text-white'
+                            }`}
+                          >
+                            {preset === 10000 ? '1억' : preset === 12000 ? '1.2억Cap' : `${preset / 1000}천`}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* 3) 직급별 PSU 약정 & 기준주가 */}
+                    <div className="fintech-subcard rounded-xl p-3 space-y-2">
+                      <div className="flex justify-between items-center text-[11px]">
+                        <span className="font-semibold text-slate-300">③ 직급별 PSU (1/3×3년)</span>
+                        <span className="text-purple-300 font-bold">총 {psuTotalShares}주</span>
+                      </div>
+                      <div className="grid grid-cols-3 gap-1">
+                        {[
+                          { label: 'CL2', sub: '총 400주', val: 400 },
+                          { label: 'CL3·4', sub: '총 600주', val: 600 },
+                          { label: '미적용', sub: '0주', val: 0 }
+                        ].map(p => (
+                          <button
+                            key={p.val}
+                            onClick={() => setPsuTotalShares(p.val)}
+                            className={`py-1.5 px-1 rounded-lg border text-center transition ${
+                              psuTotalShares === p.val
+                                ? 'bg-purple-600/90 border-purple-400 text-white font-bold shadow'
+                                : 'bg-navy-950/70 border-slate-800 text-slate-400 hover:text-white'
+                            }`}
+                          >
+                            <span className="text-xs block">{p.label}</span>
+                            <span className="text-[9px] opacity-80 block">{p.sub}</span>
+                          </button>
+                        ))}
+                      </div>
+                      <div className="flex items-center justify-between text-[10px] text-slate-400 pt-0.5">
+                        <span>연봉상승률: <strong className="text-emerald-400">+{salaryGrowthRate}%/년</strong></span>
+                        <span>기준주가: <strong className="text-amber-300">{(stockPrice / 10000).toFixed(1)}만 원</strong></span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 우측: 선택된 내 사업부 5개년 핵심 요약 히어로 박스 (BonusCHIP 스타일) */}
+                <div className="lg:col-span-4 bg-gradient-to-br from-blue-950/80 via-navy-800 to-navy-900 border border-blue-500/50 rounded-2xl p-4 shadow-xl">
+                  <div className="flex justify-between items-center mb-1.5">
+                    <span className="text-xs font-bold text-blue-300 flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse"></span>
+                      {myCumData.divisionName} 5개년 세후 총 수령가치
+                    </span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-200 border border-blue-400/30 font-semibold">
+                      가중치 {myCumData.weightLabel}
+                    </span>
+                  </div>
+                  <div className="text-2xl sm:text-3xl font-black text-white tracking-tight">
+                    {formatKoreanWon(myCumData.totalCombined)}
+                  </div>
+                  <div className="text-[11px] text-slate-400 mt-0.5">
+                    세전 총 배정액 {formatKoreanWon(myCumData.sumGrossTotal)} (공제 세금 -{formatKoreanWon(myCumData.sumTotalTaxes)})
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 mt-3 pt-2.5 border-t border-slate-700/70 text-xs">
+                    <div>
+                      <span className="text-[10px] text-slate-400 block">💵 통장 순현금 (1월 말)</span>
+                      <span className="font-extrabold text-emerald-400">{formatKoreanWon(myCumData.sumFinalNetCash)}</span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-400 block">📈 총 보유주식 (OPI2+PSU)</span>
+                      <span className="font-extrabold text-amber-300">{formatNumber(myCumData.sumRetainedShares)}주 ({formatKoreanWon(myCumData.finalRetainedStockEval)})</span>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+
+              {/* 연간 보상 지급 시기 타임라인 바 (1월 말 OPI 1 -> 3월 말~4월 초 주총 후 OPI 2 -> 10월 PSU -> 연말정산) */}
+              <div className="pt-3 border-t border-slate-800/80">
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 text-xs">
+                  <div className="flex items-center gap-2.5 bg-emerald-950/25 border border-emerald-800/50 rounded-xl px-3 py-2">
+                    <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-extrabold text-[11px] whitespace-nowrap">1월 말</span>
+                    <div>
+                      <span className="font-bold text-emerald-200 block text-[11px]">OPI 1 현금 지급</span>
+                      <span className="text-[10px] text-slate-400">계약연봉 최대 50% (누진세 원천징수)</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2.5 bg-amber-950/25 border border-amber-700/50 rounded-xl px-3 py-2">
+                    <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-extrabold text-[11px] whitespace-nowrap">3월말~4월초</span>
+                    <div>
+                      <span className="font-bold text-amber-200 block text-[11px]">주총 후 OPI 2 주식 입고</span>
+                      <span className="text-[10px] text-slate-400">세후 45.533% 입고 (즉시 1/3 매도가능)</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2.5 bg-teal-950/25 border border-teal-700/50 rounded-xl px-3 py-2">
+                    <span className="px-2 py-0.5 rounded bg-teal-500/20 text-teal-300 font-extrabold text-[11px] whitespace-nowrap">1년·2년후 봄</span>
+                    <div>
+                      <span className="font-bold text-teal-200 block text-[11px]">OPI 2 독소조항 락업 해제</span>
+                      <span className="text-[10px] text-slate-400">1년후 1/3 · 2년후 1/3 순차 매도가능</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2.5 bg-purple-950/25 border border-purple-700/50 rounded-xl px-3 py-2">
+                    <span className="px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 font-extrabold text-[11px] whitespace-nowrap">10월 (28~30년)</span>
+                    <div>
+                      <span className="font-bold text-purple-200 block text-[11px]">PSU 약정주식 1/3 분할입고</span>
+                      <span className="text-[10px] text-slate-400">CL2 400주 / CL3·4 600주 (연말정산 과세)</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
             {/* ===================================================================== */}
             {/* [최상단 배치] 1. 2026~2030년(5개년) 영업이익 조절 -> 2027~2031년 수령 */}
             {/* ===================================================================== */}
-            <section className="bg-navy-800/90 border-2 border-blue-500/40 rounded-2xl p-5 shadow-2xl backdrop-blur space-y-4">
+            <section className="fintech-card rounded-2xl p-5 space-y-4">
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-3 border-b border-slate-700/80">
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
@@ -832,11 +1074,11 @@
                       <span>📊</span> 2026~2030년 영업이익 조절 (→ 2027~2031년 수령, 단위: 조 원)
                     </h2>
                     <span className="text-[11px] px-2.5 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/50 text-amber-300 font-semibold">
-                      📌 올해(26년) 영업이익 370조 → 27년 1월 수령!
+                      📌 26년 실적(370조) → 27년 1월 말 OPI 1(현금) · 3월 말~4월 초 주총 후 OPI 2(주식) 수령!
                     </span>
                   </div>
                   <p className="text-xs text-slate-400 mt-1">
-                    당해 연도 영업이익(2026~2030년)을 재원으로 이듬해(2027~2031년)에 성과급을 수령합니다. 또한 28·29·30년 10월에는 PSU(CL2 총 400주 / CL3·4 총 600주)를 1/3씩 분할 수령합니다.
+                    전년도 영업이익(2026~2030년)을 재원으로 이듬해 1월 말 OPI 1(현금), 주주총회 후 3월 말~4월 초 OPI 2(주식)를 수령합니다. 28·29·30년 10월에는 PSU가 1/3씩 지급됩니다.
                   </p>
                 </div>
 
@@ -895,7 +1137,7 @@
                             {perfYr}년 영업이익 {perfYr === 2026 && <span className="text-[10px] text-amber-300">(올해)</span>}
                           </span>
                           <span className="text-[10px] font-semibold text-blue-400">
-                            ↳ {yr}년 수령분
+                            ↳ {yr}년 1월(현금)·3~4월(주식)
                           </span>
                         </div>
                         <div className="flex items-center">
@@ -930,11 +1172,11 @@
                       <div className="mt-2 space-y-1">
                         {isExceeded ? (
                           <div className="flex items-center justify-center gap-1 py-1 px-2 rounded-lg bg-orange-950/60 border border-orange-500/80 text-orange-300 text-[10px] font-bold shadow-sm">
-                            <span>🔥 100조 돌파! OPI 2 주식 지급</span>
+                            <span>🔥 3~4월 주총 후 OPI 2 주식 지급</span>
                           </div>
                         ) : (
                           <div className="flex items-center justify-center gap-1 py-1 px-2 rounded-lg bg-slate-800/90 border border-slate-700 text-slate-400 text-[10px] font-medium">
-                            <span>⚪ OPI 1만 지급 (OPI 2 미발동)</span>
+                            <span>⚪ 1월 OPI 1만 지급 (OPI 2 미발동)</span>
                           </div>
                         )}
                         {yrPsuShares > 0 && (
@@ -968,8 +1210,8 @@
                 </div>
 
                 <div className="flex items-center gap-2 text-xs bg-amber-950/50 border border-amber-700/70 px-3 py-1.5 rounded-xl text-amber-300 font-medium">
-                  <span>🔒 OPI 2 독소조항:</span>
-                  <strong className="text-white">세후 입고 주식 중 즉시 1/3 · 1년후 1/3 · 2년후 1/3 매도가능 (현금 강제합산 제외)</strong>
+                  <span>🔒 주총 후(3월말~4월초) OPI 2 독소조항:</span>
+                  <strong className="text-white">세후 입고 주식 중 즉시 1/3 · 1년후 1/3 · 2년후 1/3 매도가능</strong>
                 </div>
               </div>
 
@@ -977,24 +1219,30 @@
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {simulationData.divisions.map(div => {
                   const cum = simulationData.cumulativeByDivision[div.key];
-                  const isMemory = div.key === 'memory';
+                  const isMyDiv = div.key === myDivision;
                   return (
                     <div
                       key={div.key}
-                      className={`relative bg-navy-800/90 border rounded-2xl p-5 shadow-xl transition hover:border-slate-500 ${
-                        isMemory ? 'border-blue-500/80 bg-gradient-to-b from-blue-950/30 to-navy-800' : 'border-slate-700/80'
+                      onClick={() => setMyDivision(div.key)}
+                      className={`cursor-pointer relative fintech-card rounded-2xl p-5 transition ${
+                        isMyDiv ? 'ring-2 ring-blue-500 border-blue-400/80 bg-gradient-to-b from-blue-950/40 to-navy-800/90' : 'hover:border-slate-600'
                       }`}
                     >
                       {/* Division Badge & Headcount */}
                       <div className="flex justify-between items-start pb-3 border-b border-slate-700/60">
                         <div>
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-1.5">
                             <h3 className="text-base font-bold text-white">{cum.divisionName}</h3>
                             <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded text-white ${
                               div.key === 'memory' ? 'bg-blue-600' : div.key === 'common' ? 'bg-emerald-600' : 'bg-amber-600'
                             }`}>
                               가중치 {cum.weightLabel}
                             </span>
+                            {isMyDiv && (
+                              <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-blue-500/30 border border-blue-400 text-blue-200">
+                                내 사업부
+                              </span>
+                            )}
                           </div>
                           <span className="text-xs text-slate-400">인원수: {formatNumber(cum.headcount)}명</span>
                         </div>
@@ -1013,13 +1261,13 @@
                       <div className="mt-4 space-y-2.5 text-xs">
                         
                         <div className="flex justify-between items-center bg-navy-900/60 p-2 rounded-lg">
-                          <span className="text-slate-300">💵 OPI 1 세후 현금 총액</span>
+                          <span className="text-slate-300">💵 OPI 1 세후 현금 총액 (매년 1월 말)</span>
                           <span className="font-semibold text-emerald-400">{formatKoreanWon(cum.sumOpi1Net)}</span>
                         </div>
 
                         <div className="flex justify-between items-center bg-navy-900/60 p-2 rounded-lg">
                           <div>
-                            <span className="text-slate-300 block">📈 OPI 2 세후 입고 주식 총액 (45.533% 전량)</span>
+                            <span className="text-slate-300 block">📈 OPI 2 세후 입고 주식 (주총 후 3월말~4월초)</span>
                             <span className="text-[10px] text-slate-400">
                               세전 {formatNumber(cum.sumPreTaxShares)}주 중 세금 {formatNumber(cum.sumTaxDeductedShares)}주 차감 → <strong>{formatNumber(cum.sumNetReceivedShares)}주 입고</strong>
                             </span>
@@ -1058,7 +1306,7 @@
                           <div className="flex justify-between items-center bg-purple-950/30 border border-purple-700/50 p-2 rounded-lg">
                             <div>
                               <span className="text-purple-200 font-semibold block">
-                                🎁 PSU 약정 주식 (28·29·30년 1/3씩, 총 {formatNumber(psuTotalShares)}주)
+                                🎁 PSU 약정 주식 (28·29·30년 10월 1/3씩, 총 {formatNumber(psuTotalShares)}주)
                               </span>
                               <span className="text-[10px] text-purple-300/90">
                                 {psuTaxMode === 'yearend_cash'
@@ -1123,43 +1371,55 @@
             {/* ===================================================================== */}
             {/* 3. Interactive Parameters Settings Panel */}
             {/* ===================================================================== */}
-            <section className="bg-navy-800/80 border border-slate-700/80 rounded-2xl p-5 shadow-lg backdrop-blur space-y-5">
+            <section className="fintech-card rounded-2xl p-5 space-y-5">
               <div className="flex items-center justify-between pb-3 border-b border-slate-700">
                 <h3 className="font-bold text-white text-base flex items-center gap-2">
-                  <span>⚙️</span> 세부 파라미터 및 배분 산식 설정 (연봉 · 주가 · 인원수 · 산식 모드)
+                  <span>⚙️</span> 세부 파라미터 및 배분 산식 설정 (연봉 직접 입력 · 주가 · 인원수 · 산식 모드)
                 </h3>
                 <span className="text-xs text-slate-400">모든 값은 실시간으로 연산에 반영됩니다</span>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 
-                {/* 1. 계약연봉(샐러리캡 1.2억) & 연봉상승률 & 삼성전자 주가 */}
+                {/* 1. 계약연봉(직접 입력 + 슬라이더, 샐러리캡 1.2억) & 연봉상승률 & 삼성전자 주가 */}
                 <div className="space-y-3.5 bg-navy-900/50 p-4 rounded-xl border border-slate-700/70">
                   <div className="flex items-center justify-between">
                     <h4 className="text-xs font-bold text-blue-400 uppercase tracking-wider">
-                      1. 개인 연봉(샐러리캡 1.2억) 및 주가 설정
+                      1. 개인 연봉(직접 입력 · 1.2억 Cap) 및 주가
                     </h4>
                     <span className="text-[10px] px-2 py-0.5 rounded bg-blue-950/80 text-blue-300 border border-blue-700/50 font-semibold">
                       Max 1.2억 Cap
                     </span>
                   </div>
 
-                  {/* 2027년 시작 계약연봉 슬라이더 (5,000만 ~ 1.2억 원) */}
-                  <div>
-                    <div className="flex justify-between items-center mb-1 text-xs">
+                  {/* 2027년 시작 계약연봉 직접 입력 + 슬라이더 (5,000만 ~ 1.2억 원) */}
+                  <div className="space-y-1.5">
+                    <div className="flex justify-between items-center text-xs">
                       <span className="text-slate-300 font-semibold">2027년 시작 계약연봉</span>
-                      <span className="font-bold text-blue-400 text-sm">{formatKoreanWon(baseSalaryWon)}</span>
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="number"
+                          min="5000"
+                          max="12000"
+                          step="10"
+                          value={baseSalaryManwon}
+                          onChange={(e) => handleSalaryInputChange(e.target.value)}
+                          onBlur={handleSalaryInputBlur}
+                          className="w-24 bg-navy-950 border border-blue-500/70 rounded-lg px-2 py-1 text-right font-extrabold text-blue-300 text-xs focus:outline-none focus:border-blue-400"
+                        />
+                        <span className="text-xs text-slate-300 font-semibold">만 원 ({formatKoreanWon(baseSalaryWon)})</span>
+                      </div>
                     </div>
                     <input
                       type="range"
                       min="5000"
                       max="12000"
-                      step="100"
+                      step="50"
                       value={baseSalaryManwon}
                       onChange={(e) => setBaseSalaryManwon(Math.min(12000, Math.max(5000, Number(e.target.value))))}
                       className="w-full accent-samsung cursor-pointer"
                     />
-                    <div className="flex justify-between text-[11px] text-slate-400 mt-0.5">
+                    <div className="flex justify-between text-[11px] text-slate-400">
                       <span>5,000만 원</span>
                       <span className="text-emerald-400 font-medium">27년 OPI 1 한도: {formatKoreanWon(opi1CapWon)}</span>
                       <span>1억 2,000만 원(Cap)</span>
@@ -1668,14 +1928,14 @@
             {/* ===================================================================== */}
             {/* 5. 연도별 상세 시뮬레이션 테이블 */}
             {/* ===================================================================== */}
-            <section className="bg-navy-800/80 border border-slate-700/80 rounded-2xl p-5 shadow-lg backdrop-blur space-y-4">
+            <section className="fintech-card rounded-2xl p-5 space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-slate-700">
                 <div>
                   <h3 className="font-bold text-white text-base flex items-center gap-2">
-                    <span>📋</span> 연도별 상세 시뮬레이션 데이터 테이블
+                    <span>📋</span> 연도별 상세 시뮬레이션 데이터 테이블 (1월 OPI 1 · 3~4월 주총 후 OPI 2 · 10월 PSU)
                   </h3>
                   <p className="text-xs text-slate-400">
-                    OPI 2 세후 입고 주식의 매도제한 독소조항(즉시 1/3 · 1년후 1/3 · 2년후 1/3)과 PSU(1/3 분할 수령), 통장 순현금을 확인하세요
+                    주총 결의 후 3월 말~4월 초 입고되는 OPI 2 세후 주식의 매도제한 독소조항(즉시 1/3 · 1년후 1/3 · 2년후 1/3)과 10월 PSU, 통장 순현금을 확인하세요
                   </p>
                 </div>
 
@@ -1733,10 +1993,10 @@
                       <th className="p-3">영업이익</th>
                       {selectedDivisionTab === 'all' && <th className="p-3">사업부</th>}
                       <th className="p-3">OPI 총 배정액</th>
-                      <th className="p-3">OPI 1 (세후/세전 현금)</th>
-                      <th className="p-3">OPI 2 세후 입고 주식(100%)</th>
-                      <th className="p-3 text-amber-300">🔒 OPI 2 독소조항 분할 (즉시·1년·2년)</th>
-                      <th className="p-3 text-teal-300">🔓 당해 매도가능 해제 주식</th>
+                      <th className="p-3">OPI 1 (1월 말 현금)</th>
+                      <th className="p-3">OPI 2 (3월말~4월초 주식)</th>
+                      <th className="p-3 text-amber-300">🔒 OPI 2 독소조항 (즉시·1년·2년)</th>
+                      <th className="p-3 text-teal-300">🔓 당해 3~4월 해제 주식</th>
                       <th className="p-3 text-purple-300">🎁 PSU 약정 (10월 1/3씩)</th>
                       <th className="p-3 text-emerald-300 font-black">통장 순현금 수령액</th>
                       <th className="p-3 text-blue-300 font-black">계좌 총 보유 주식</th>
