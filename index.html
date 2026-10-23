@@ -238,7 +238,8 @@
       });
       const [baseSalaryManwon, setBaseSalaryManwon] = useState(10000); // 2027년 시작 계약연봉: 기본 10,000만 원 (1억 원, 최대 1.2억 샐러리캡)
       const [salaryGrowthRate, setSalaryGrowthRate] = useState(5); // 연간 연봉 상승률 (기본 연 5%)
-      const [stockPrice, setStockPrice] = useState(80000); // 삼성전자 주가 (기본 80,000원)
+      const [stockPrice, setStockPrice] = useState(220000); // 삼성전자 기준 주가 (2026년 20만 원 상회 및 컨센서스 반영: 기본 220,000원)
+      const [stockGrowthRate, setStockGrowthRate] = useState(0); // 연간 주가 상승률 (기본 0%, -10% ~ +30% 조절 가능)
 
       // 5개년 연도별 영업이익 (조 원)
       const [opProfits, setOpProfits] = useState(SCENARIOS.default.profits);
@@ -296,6 +297,9 @@
           const yearOpi1CapWon = yearSalaryWon * 0.5; // 해당 연도 OPI 1 최대 한도 (최대 6,000만 원)
           const isSalaryCapped = yearSalaryWon >= SALARY_CAP_WON;
 
+          // 연도별 삼성전자 주가 계산 (매년 stockGrowthRate% 복리 변동)
+          const yearStockPrice = Math.max(10000, Math.round(stockPrice * Math.pow(1 + (stockGrowthRate / 100), yearIdx)));
+
           // 1. 배분 모드에 따른 사업부별 1인당 Gross 배정액 산출 [메모리 100% : 공통 70% : 비메모리 40%]
           let grossAllocation = {};
           const weightedUsers = (headcounts.memory * 1.0) + (headcounts.common * 0.7) + (headcounts.nonMemory * 0.4);
@@ -346,11 +350,11 @@
 
             const opi2TaxInfo = calcOPI2Tax(opi2Gross);
 
-            // 주식 수 산출:
+            // 주식 수 산출 (해당 연도 주가 yearStockPrice 기준):
             // 세전 배정 주식 수
-            const preTaxStockShares = stockPrice > 0 ? Math.floor(opi2Gross / stockPrice) : 0;
+            const preTaxStockShares = yearStockPrice > 0 ? Math.floor(opi2Gross / yearStockPrice) : 0;
             // 세금(54.467%)만큼 주식 수를 차감하고 실제 계좌에 입고되는 세후 순주식 수 (45.533%)
-            const netReceivedShares = stockPrice > 0 ? Math.floor(opi2TaxInfo.netStockValue / stockPrice) : 0;
+            const netReceivedShares = yearStockPrice > 0 ? Math.floor(opi2TaxInfo.netStockValue / yearStockPrice) : 0;
             const taxDeductedShares = Math.max(0, preTaxStockShares - netReceivedShares);
 
             // 입고된 세후 순주식(45.533%)의 1/3 매도 현금화 및 2/3 보유 계산
@@ -371,6 +375,7 @@
               yearSalaryWon,
               yearOpi1CapWon,
               isSalaryCapped,
+              yearStockPrice,
               grossTotal: gross,
               opi1Gross,
               opi1Tax: opi1TaxInfo.totalTax,
@@ -402,9 +407,12 @@
             yearSalaryWon,
             yearOpi1CapWon,
             isSalaryCapped,
+            yearStockPrice,
             divisions: divResults
           };
         });
+
+        const final2031StockPrice = resultsByYear[2031].yearStockPrice;
 
         // 5개년 누적 합계 (Cumulative Totals)
         const cumulativeByDivision = {};
@@ -446,6 +454,12 @@
             sumSoldShares += data.stockSellShares;
           });
 
+          // 2031년 말 기준 누적 보유 주식(2/3)의 평가가치 및 평가차익 계산
+          const finalRetainedStockEval = stockGrowthRate !== 0
+            ? sumRetainedShares * final2031StockPrice
+            : sumRetainedStock;
+          const retainedStockGain = finalRetainedStockEval - sumRetainedStock;
+
           cumulativeByDivision[div.key] = {
             divisionName: div.name,
             headcount: div.count,
@@ -461,13 +475,15 @@
             sumStockSellCash,
             sumFinalNetCash,
             sumRetainedStock,
+            finalRetainedStockEval,
+            retainedStockGain,
             sumTotalTaxes,
             sumPreTaxShares,
             sumTaxDeductedShares,
             sumNetReceivedShares,
             sumRetainedShares,
             sumSoldShares,
-            totalCombined: sumFinalNetCash + sumRetainedStock
+            totalCombined: sumFinalNetCash + finalRetainedStockEval
           };
         });
 
@@ -475,9 +491,10 @@
           years,
           divisions,
           resultsByYear,
+          final2031StockPrice,
           cumulativeByDivision
         };
-      }, [headcounts, baseSalaryWon, salaryGrowthRate, stockPrice, opProfits, allocationMode, opi2Mode, opi1CapWon]);
+      }, [headcounts, baseSalaryWon, salaryGrowthRate, stockPrice, stockGrowthRate, opProfits, allocationMode, opi2Mode, opi1CapWon]);
 
       // CSV 데이터 다운로드 핸들러
       const handleExportCSV = () => {
@@ -903,13 +920,20 @@
                         {/* Highlight: Retained Stock */}
                         <div className="p-2.5 bg-blue-950/40 border border-blue-800/80 rounded-xl flex justify-between items-center text-blue-200">
                           <div>
-                            <span className="font-bold block text-xs">계좌 잔여 보유 주식(2/3) 가치</span>
-                            <span className="text-[10px] text-blue-400">
-                              실제 보유 삼성전자 주식 약 {formatNumber(cum.sumRetainedShares)}주
+                            <span className="font-bold block text-xs">
+                              계좌 잔여 보유 주식(2/3) 가치 {stockGrowthRate !== 0 && `(31년 주가 ${formatNumber(simulationData.final2031StockPrice)}원 평가)`}
                             </span>
+                            <span className="text-[10px] text-blue-400 block">
+                              실제 보유 삼성전자 주식 약 {formatNumber(cum.sumRetainedShares)}주 (입고원금 {formatKoreanWon(cum.sumRetainedStock)})
+                            </span>
+                            {stockGrowthRate !== 0 && (
+                              <span className={`text-[10px] font-semibold block ${cum.retainedStockGain >= 0 ? 'text-amber-300' : 'text-red-300'}`}>
+                                주가 변동 평가손익: {cum.retainedStockGain >= 0 ? '+' : '-'}{formatKoreanWon(Math.abs(cum.retainedStockGain))}
+                              </span>
+                            )}
                           </div>
-                          <span className="text-sm font-black text-blue-300">
-                            {formatKoreanWon(cum.sumRetainedStock)}
+                          <span className="text-sm font-black text-blue-300 whitespace-nowrap ml-2">
+                            {formatKoreanWon(cum.finalRetainedStockEval)}
                           </span>
                         </div>
 
@@ -1023,25 +1047,66 @@
                     </div>
                   </div>
 
-                  {/* 삼성전자 주가 */}
-                  <div className="pt-2 border-t border-slate-800/80">
-                    <div className="flex justify-between items-center mb-1 text-xs">
-                      <span className="text-slate-300 font-semibold">삼성전자 기준 주가</span>
-                      <span className="font-bold text-amber-400 text-sm">{formatNumber(stockPrice)} 원</span>
+                  {/* 삼성전자 주가 (기본 220,000원, 범위 10만 ~ 100만 원) */}
+                  <div className="pt-2 border-t border-slate-800/80 space-y-2">
+                    <div>
+                      <div className="flex justify-between items-center mb-1 text-xs">
+                        <span className="text-slate-300 font-semibold">삼성전자 기준 주가 (2027 시작)</span>
+                        <span className="font-bold text-amber-400 text-sm">{formatNumber(stockPrice)} 원 ({(stockPrice / 10000).toFixed(1)}만전자)</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="100000"
+                        max="1000000"
+                        step="5000"
+                        value={stockPrice}
+                        onChange={(e) => setStockPrice(Number(e.target.value))}
+                        className="w-full accent-amber-500 cursor-pointer"
+                      />
+                      <div className="flex justify-between text-[10px] text-slate-400 mt-0.5">
+                        <span>10만 원</span>
+                        <span className="text-amber-300/90 font-medium">26년 평균 20만+ (기본 22만)</span>
+                        <span>100만 원</span>
+                      </div>
+                      <div className="flex flex-wrap gap-1 mt-1.5">
+                        {[180000, 220000, 300000, 500000, 1000000].map(p => (
+                          <button
+                            key={p}
+                            onClick={() => setStockPrice(p)}
+                            className={`px-2 py-0.5 rounded text-[10px] font-semibold border transition ${
+                              stockPrice === p
+                                ? 'bg-amber-600 text-white border-amber-400'
+                                : 'bg-navy-950 text-slate-400 border-slate-700 hover:text-white'
+                            }`}
+                          >
+                            {p / 10000}만{p === 220000 ? '(기본)' : ''}
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                    <input
-                      type="range"
-                      min="50000"
-                      max="150000"
-                      step="1000"
-                      value={stockPrice}
-                      onChange={(e) => setStockPrice(Number(e.target.value))}
-                      className="w-full accent-amber-500 cursor-pointer"
-                    />
-                    <div className="flex justify-between text-[11px] text-slate-400 mt-0.5">
-                      <span>50,000원</span>
-                      <span>기본 80,000원</span>
-                      <span>150,000원</span>
+
+                    {/* 연간 주가 상승률 (보유 주식 2/3 평가가치 연동) */}
+                    <div className="pt-1.5 border-t border-slate-800/60">
+                      <div className="flex justify-between items-center mb-1 text-xs">
+                        <span className="text-slate-300 font-semibold">연간 주가 상승률 (2/3 보유주식 평가)</span>
+                        <span className="font-bold text-amber-300 text-xs">
+                          연 {stockGrowthRate >= 0 ? `+${stockGrowthRate}%` : `${stockGrowthRate}%`} (31년 {formatNumber(simulationData.final2031StockPrice)}원)
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min="-10"
+                        max="30"
+                        step="1"
+                        value={stockGrowthRate}
+                        onChange={(e) => setStockGrowthRate(Number(e.target.value))}
+                        className="w-full accent-amber-400 cursor-pointer"
+                      />
+                      <div className="flex justify-between text-[10px] text-slate-400 mt-0.5">
+                        <span>-10%</span>
+                        <span>0% (단일주가 고정)</span>
+                        <span>+30%/년</span>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1476,8 +1541,11 @@
                               {d.netReceivedShares > 0 ? (
                                 <div>
                                   <span className="font-bold text-white block">{formatNumber(d.netReceivedShares)}주 입고</span>
-                                  <span className="text-[10px] text-slate-400">
+                                  <span className="text-[10px] text-slate-400 block">
                                     (세전 {formatNumber(d.preTaxStockShares)}주 - 세금 {formatNumber(d.taxDeductedShares)}주)
+                                  </span>
+                                  <span className="text-[9px] text-amber-400/90">
+                                    기준주가 {formatNumber(d.yearStockPrice)}원
                                   </span>
                                 </div>
                               ) : '-'}
