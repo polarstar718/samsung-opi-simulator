@@ -249,10 +249,8 @@
       const [selectedScenarioKey, setSelectedScenarioKey] = useState('default');
 
       // 재원 및 배분 수식 옵션 상태
-      // allocationMode: 'separated' (해석 1 분리형) vs 'overlapping' (해석 2 중첩형)
-      const [allocationMode, setAllocationMode] = useState('separated');
-      // separatedWeightType: 'weighted' (38,250명 가중완전배분) vs 'simple' (45,000명 단순균등 후 70%)
-      const [separatedWeightType, setSeparatedWeightType] = useState('weighted');
+      // allocationMode: 'weighted' (가중 인원수 57,250명 모수 완전배분 - 기본값) vs 'simple' (단순 77,500명 인원수 모수 배분)
+      const [allocationMode, setAllocationMode] = useState('weighted');
       // opi2Mode: 'deduction' (방식 1: 통합 차감형) vs 'excess' (방식 2: 100조 초과 순수 분리형)
       const [opi2Mode, setOpi2Mode] = useState('deduction');
 
@@ -282,9 +280,9 @@
       const simulationData = useMemo(() => {
         const years = [2027, 2028, 2029, 2030, 2031];
         const divisions = [
-          { key: 'memory', name: '메모리사업부', count: headcounts.memory, color: '#3B82F6' },
-          { key: 'common', name: '공통부서', count: headcounts.common, color: '#10B981' },
-          { key: 'nonMemory', name: '비메모리사업부', count: headcounts.nonMemory, color: '#F59E0B' }
+          { key: 'memory', name: '메모리사업부', count: headcounts.memory, weight: 1.0, weightLabel: '100%', color: '#3B82F6' },
+          { key: 'common', name: '공통부서', count: headcounts.common, weight: 0.7, weightLabel: '70%', color: '#10B981' },
+          { key: 'nonMemory', name: '비메모리사업부', count: headcounts.nonMemory, weight: 0.4, weightLabel: '40%', color: '#F59E0B' }
         ];
 
         const resultsByYear = {};
@@ -295,71 +293,31 @@
           const totalPoolWon = opWon * 0.105; // 10.5% 전체 재원
           const isHurdleMet = opTrillion > 100; // OPI 2 발동 조건: 100조 초과
 
-          // 1. 배분 모드에 따른 사업부별 1인당 Gross 배정액 산출
+          // 1. 배분 모드에 따른 사업부별 1인당 Gross 배정액 산출 [메모리 100% : 공통 70% : 비메모리 40%]
           let grossAllocation = {};
+          const weightedUsers = (headcounts.memory * 1.0) + (headcounts.common * 0.7) + (headcounts.nonMemory * 0.4);
+          const totalAllUsers = headcounts.memory + headcounts.common + headcounts.nonMemory;
 
-          if (allocationMode === 'separated') {
-            // [해석 1 - 분리형]
-            const memoryPool = totalPoolWon * 0.6; // 60%
-            const commonNonMemPool = totalPoolWon * 0.4; // 40%
+          const baseUnit = allocationMode === 'weighted'
+            ? (weightedUsers > 0 ? totalPoolWon / weightedUsers : 0)
+            : (totalAllUsers > 0 ? totalPoolWon / totalAllUsers : 0);
 
-            grossAllocation.memory = headcounts.memory > 0 ? (memoryPool / headcounts.memory) : 0;
-
-            if (separatedWeightType === 'weighted') {
-              const weightedUsers = (headcounts.common * 0.7) + (headcounts.nonMemory * 1.0);
-              const nonMemUnit = weightedUsers > 0 ? (commonNonMemPool / weightedUsers) : 0;
-              grossAllocation.nonMemory = nonMemUnit;
-              grossAllocation.common = nonMemUnit * 0.7;
-            } else {
-              const totalCommonUsers = headcounts.common + headcounts.nonMemory;
-              const unit = totalCommonUsers > 0 ? (commonNonMemPool / totalCommonUsers) : 0;
-              grossAllocation.nonMemory = unit * 1.0;
-              grossAllocation.common = unit * 0.7;
-            }
-          } else {
-            // [해석 2 - 중첩형]
-            const memDedicatedUnit = headcounts.memory > 0 ? (totalPoolWon * 0.6) / headcounts.memory : 0;
-            const totalAllUsers = headcounts.memory + headcounts.common + headcounts.nonMemory;
-            const commonSharedUnit = totalAllUsers > 0 ? (totalPoolWon * 0.4) / totalAllUsers : 0;
-
-            grossAllocation.memory = (memDedicatedUnit * 1.0) + (commonSharedUnit * 0.7);
-            grossAllocation.common = commonSharedUnit * 0.7;
-            grossAllocation.nonMemory = commonSharedUnit * 1.0;
-          }
+          grossAllocation.memory = baseUnit * 1.0;    // 100% (공통 4 + 메모리 6 = 10)
+          grossAllocation.common = baseUnit * 0.7;    // 70%
+          grossAllocation.nonMemory = baseUnit * 0.4; // 40% (공통 4 해당분)
 
           // 2. 100조 초과 순수 분리형(방식 2) 계산용 추가 배분액
-          let grossExcessAllocation = {};
-          if (opi2Mode === 'excess') {
-            if (isHurdleMet) {
-              const excessOpWon = (opTrillion - 100) * 1000000000000;
-              const excessPoolWon = excessOpWon * 0.105;
+          let grossExcessAllocation = { memory: 0, common: 0, nonMemory: 0 };
+          if (opi2Mode === 'excess' && isHurdleMet) {
+            const excessOpWon = (opTrillion - 100) * 1000000000000;
+            const excessPoolWon = excessOpWon * 0.105;
+            const excessBaseUnit = allocationMode === 'weighted'
+              ? (weightedUsers > 0 ? excessPoolWon / weightedUsers : 0)
+              : (totalAllUsers > 0 ? excessPoolWon / totalAllUsers : 0);
 
-              if (allocationMode === 'separated') {
-                const memPoolEx = excessPoolWon * 0.6;
-                const comPoolEx = excessPoolWon * 0.4;
-                grossExcessAllocation.memory = headcounts.memory > 0 ? (memPoolEx / headcounts.memory) : 0;
-                if (separatedWeightType === 'weighted') {
-                  const weightedUsers = (headcounts.common * 0.7) + (headcounts.nonMemory * 1.0);
-                  const nonMemEx = weightedUsers > 0 ? (comPoolEx / weightedUsers) : 0;
-                  grossExcessAllocation.nonMemory = nonMemEx;
-                  grossExcessAllocation.common = nonMemEx * 0.7;
-                } else {
-                  const totalCommonUsers = headcounts.common + headcounts.nonMemory;
-                  const unitEx = totalCommonUsers > 0 ? (comPoolEx / totalCommonUsers) : 0;
-                  grossExcessAllocation.nonMemory = unitEx;
-                  grossExcessAllocation.common = unitEx * 0.7;
-                }
-              } else {
-                const memUnitEx = headcounts.memory > 0 ? (excessPoolWon * 0.6) / headcounts.memory : 0;
-                const totalAllUsers = headcounts.memory + headcounts.common + headcounts.nonMemory;
-                const comUnitEx = totalAllUsers > 0 ? (excessPoolWon * 0.4) / totalAllUsers : 0;
-                grossExcessAllocation.memory = memUnitEx + (comUnitEx * 0.7);
-                grossExcessAllocation.common = comUnitEx * 0.7;
-                grossExcessAllocation.nonMemory = comUnitEx * 1.0;
-              }
-            } else {
-              grossExcessAllocation = { memory: 0, common: 0, nonMemory: 0 };
-            }
+            grossExcessAllocation.memory = excessBaseUnit * 1.0;
+            grossExcessAllocation.common = excessBaseUnit * 0.7;
+            grossExcessAllocation.nonMemory = excessBaseUnit * 0.4;
           }
 
           // 사업부별 상세 계산
@@ -482,6 +440,7 @@
           cumulativeByDivision[div.key] = {
             divisionName: div.name,
             headcount: div.count,
+            weightLabel: div.weightLabel,
             color: div.color,
             sumGrossTotal,
             sumOpi1Gross,
@@ -509,7 +468,7 @@
           resultsByYear,
           cumulativeByDivision
         };
-      }, [headcounts, baseSalaryWon, stockPrice, opProfits, allocationMode, separatedWeightType, opi2Mode, opi1CapWon]);
+      }, [headcounts, baseSalaryWon, stockPrice, opProfits, allocationMode, opi2Mode, opi1CapWon]);
 
       // CSV 데이터 다운로드 핸들러
       const handleExportCSV = () => {
@@ -856,11 +815,11 @@
                         <div>
                           <div className="flex items-center gap-2">
                             <h3 className="text-base font-bold text-white">{cum.divisionName}</h3>
-                            {isMemory && (
-                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-500 text-white">
-                                전용 60%
-                              </span>
-                            )}
+                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded text-white ${
+                              div.key === 'memory' ? 'bg-blue-600' : div.key === 'common' ? 'bg-emerald-600' : 'bg-amber-600'
+                            }`}>
+                              가중치 {cum.weightLabel}
+                            </span>
                           </div>
                           <span className="text-xs text-slate-400">인원수: {formatNumber(cum.headcount)}명</span>
                         </div>
@@ -868,6 +827,9 @@
                           <span className="text-[11px] text-slate-400 block">5개년 세후 총 수령가치</span>
                           <span className="text-xl font-black text-blue-400">
                             {formatKoreanWon(cum.totalCombined)}
+                          </span>
+                          <span className="text-[10px] text-slate-400 block">
+                            (세전 총 배정: {formatKoreanWon(cum.sumGrossTotal)})
                           </span>
                         </div>
                       </div>
@@ -1012,7 +974,7 @@
                   <div className="space-y-2 text-xs">
                     <div>
                       <div className="flex justify-between text-slate-300 mb-1">
-                        <span>메모리사업부</span>
+                        <span>메모리사업부 (가중치 100%)</span>
                         <span className="font-semibold text-white">{formatNumber(headcounts.memory)}명 (3.25만)</span>
                       </div>
                       <input
@@ -1044,7 +1006,7 @@
 
                     <div>
                       <div className="flex justify-between text-slate-300 mb-1">
-                        <span>비메모리사업부</span>
+                        <span>비메모리사업부 (가중치 40%)</span>
                         <span className="font-semibold text-white">{formatNumber(headcounts.nonMemory)}명 (2.25만)</span>
                       </div>
                       <input
@@ -1063,34 +1025,36 @@
                 {/* 3. 재원 배분 수식 & OPI 2 계산 모드 토글 */}
                 <div className="space-y-3.5 bg-navy-900/50 p-4 rounded-xl border border-slate-700/70 text-xs">
                   <h4 className="text-xs font-bold text-blue-400 uppercase tracking-wider">
-                    3. 재원 배분 및 OPI 2 산식 모드
+                    3. 재원 배분 모수 및 OPI 2 산식 모드
                   </h4>
 
-                  {/* 배분 모드 (해석 1 vs 해석 2) */}
+                  {/* 배분 모드 (가중 모수 vs 단순 인원 모수) */}
                   <div>
-                    <label className="text-slate-300 block mb-1 font-semibold">사업부 재원 배분 구조:</label>
+                    <label className="text-slate-300 block mb-1 font-semibold">
+                      1인당 배정액 [메모리 100% : 공통 70% : 비메모리 40%] 모수:
+                    </label>
                     <div className="grid grid-cols-2 gap-1.5">
                       <button
-                        onClick={() => setAllocationMode('separated')}
+                        onClick={() => setAllocationMode('weighted')}
                         className={`p-1.5 rounded-lg border text-[11px] font-medium transition ${
-                          allocationMode === 'separated'
+                          allocationMode === 'weighted'
                             ? 'bg-samsung text-white border-blue-400'
                             : 'bg-navy-800 text-slate-400 border-slate-700 hover:text-white'
                         }`}
                       >
-                        [해석 1] 분리형 (기본)
-                        <span className="block text-[9px] opacity-75">메모리60% / 공통·비메40%</span>
+                        [모드 1] 가중 인원수 (기본)
+                        <span className="block text-[9px] opacity-75">5.725만명 기준 재원 100% 배분</span>
                       </button>
                       <button
-                        onClick={() => setAllocationMode('overlapping')}
+                        onClick={() => setAllocationMode('simple')}
                         className={`p-1.5 rounded-lg border text-[11px] font-medium transition ${
-                          allocationMode === 'overlapping'
+                          allocationMode === 'simple'
                             ? 'bg-samsung text-white border-blue-400'
                             : 'bg-navy-800 text-slate-400 border-slate-700 hover:text-white'
                         }`}
                       >
-                        [해석 2] 중첩형
-                        <span className="block text-[9px] opacity-75">메모리가 60%+40% 동시수령</span>
+                        [모드 2] 단순 총인원 모수
+                        <span className="block text-[9px] opacity-75">7.75만명 균등 후 100/70/40%</span>
                       </button>
                     </div>
                   </div>
@@ -1329,7 +1293,7 @@
                         : 'text-slate-400 hover:text-white'
                     }`}
                   >
-                    메모리사업부
+                    메모리사업부 (100%)
                   </button>
                   <button
                     onClick={() => setSelectedDivisionTab('common')}
@@ -1349,7 +1313,7 @@
                         : 'text-slate-400 hover:text-white'
                     }`}
                   >
-                    비메모리사업부
+                    비메모리사업부 (40%)
                   </button>
                 </div>
               </div>
