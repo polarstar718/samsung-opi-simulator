@@ -242,9 +242,9 @@
       const [stockPrice, setStockPrice] = useState(220000); // 삼성전자 기준 주가 (2026년 20만 원 상회 및 컨센서스 반영: 기본 220,000원)
       const [stockGrowthRate, setStockGrowthRate] = useState(0); // 연간 주가 상승률 (기본 0%, -10% ~ +30% 조절 가능)
 
-      // PSU (Performance Stock Unit) 약정 설정: 2028년 10월, 2029년 10월, 2030년 10월 (3회 지급, CL3 기본 200주씩)
-      const [psuSharesPerYear, setPsuSharesPerYear] = useState(200); // 회당 약정 주식 수 (CL3 기본 200주)
-      // psuTaxMode: 'yearend_cash' (200주 전량 입고 후 연말정산 시 현금에서 세금 차감 - 기본) vs 'stock_deduct' (세금만큼 주식수 선차감)
+      // PSU (Performance Stock Unit) 약정 설정: CL2 총 400주, CL3·4 총 600주 -> 2028·2029·2030년 10월에 1/3씩 분할 수령
+      const [psuTotalShares, setPsuTotalShares] = useState(600); // 총 약정 주식 수 (CL3·4 기본 600주, CL2 400주)
+      // psuTaxMode: 'yearend_cash' (전량 입고 후 연말정산 시 현금에서 세금 차감 - 기본) vs 'stock_deduct' (세금만큼 주식수 선차감)
       const [psuTaxMode, setPsuTaxMode] = useState('yearend_cash');
 
       // 5개년 연도별 영업이익 (조 원)
@@ -307,9 +307,16 @@
           // 연도별 삼성전자 주가 계산 (매년 stockGrowthRate% 복리 변동)
           const yearStockPrice = Math.max(10000, Math.round(stockPrice * Math.pow(1 + (stockGrowthRate / 100), yearIdx)));
 
-          // PSU (Performance Stock Unit): 2028년 10월, 2029년 10월, 2030년 10월 수령
+          // PSU (Performance Stock Unit): 총 약정 주식(CL2 400주 / CL3·4 600주)을 2028·2029·2030년 10월에 1/3씩 분할 수령
           const isPsuYear = (year === 2028 || year === 2029 || year === 2030);
-          const psuGrantedShares = isPsuYear ? psuSharesPerYear : 0;
+          const psuOneThirdFloor = Math.floor(psuTotalShares / 3);
+          const psuGrantedShares = year === 2028
+            ? psuOneThirdFloor
+            : year === 2029
+              ? psuOneThirdFloor
+              : year === 2030
+                ? (psuTotalShares - psuOneThirdFloor * 2)
+                : 0;
           const psuGrossValue = psuGrantedShares * yearStockPrice;
 
           // 1. 배분 모드에 따른 사업부별 1인당 Gross 배정액 산출 [메모리 100% : 공통 70% : 비메모리 40%]
@@ -369,13 +376,15 @@
             const netReceivedShares = yearStockPrice > 0 ? Math.floor(opi2TaxInfo.netStockValue / yearStockPrice) : 0;
             const taxDeductedShares = Math.max(0, preTaxStockShares - netReceivedShares);
 
-            // 입고된 세후 순주식(45.533%)의 1/3 매도 현금화 및 2/3 보유 계산
-            const stockSellCash = opi2TaxInfo.netStockValue * (1 / 3);
-            const stockSellShares = Math.floor(netReceivedShares / 3);
-            const retainedStockValue = opi2TaxInfo.netStockValue * (2 / 3);
-            const retainedStockShares = netReceivedShares - stockSellShares;
+            // OPI 2 매도제한 독소조항 (즉시 매도가능 1/3, 1년 후 해제 1/3, 2년 후 해제 1/3)
+            const tranche1Shares = Math.floor(netReceivedShares / 3); // 당해(yr) 즉시 매도가능 1/3
+            const tranche2Shares = Math.floor(netReceivedShares / 3); // 1년 후(yr+1) 매도가능 1/3
+            const tranche3Shares = netReceivedShares - tranche1Shares - tranche2Shares; // 2년 후(yr+2) 매도가능 1/3
+            const lockedFromThisYearShares = tranche2Shares + tranche3Shares; // 당해 수령분 중 1~2년 락업 물량(2/3)
+            const immediateSellableValue = opi2TaxInfo.netStockValue * (1 / 3);
+            const lockedStockValue = opi2TaxInfo.netStockValue * (2 / 3);
 
-            // 3. PSU (28·29·30년 10월 약정 주식, CL3 기본 200주) 및 연말정산 세금 계산
+            // 3. PSU (28·29·30년 10월 1/3씩 분할 수령, CL2 400주 / CL3·4 600주) 및 연말정산 세금 계산
             // 연봉 + OPI 1 + OPI 2 합산 과표 위에서 PSU 수령분 한계세율(최고 54.467%) 산출
             const psuTaxInfo = psuGrossValue > 0
               ? calcOPI1Tax(yearSalaryWon + opi1Gross + opi2Gross, psuGrossValue)
@@ -388,7 +397,7 @@
 
             if (psuGrantedShares > 0) {
               if (psuTaxMode === 'yearend_cash') {
-                // 10월에 200주 전량 입고 후, 연말정산 시 현금에서 세금 납부(차감)
+                // 10월에 약정 주식 전량 입고 후, 연말정산 시 현금에서 세금 납부(차감)
                 psuReceivedShares = psuGrantedShares;
                 psuTaxDeductedShares = 0;
                 psuNetStockValue = psuGrossValue;
@@ -402,14 +411,14 @@
               }
             }
 
-            // 최종 통장 수령 현금 = OPI 1 세후 현금 + OPI 2 세후주식 1/3 매도 현금 - PSU 연말정산 현금 세금 차감액
-            const finalNetBankCash = opi1TaxInfo.netCash + stockSellCash - psuCashTaxDeduction;
+            // 통장 순현금 수령액 (주식 강제 매도 없이 순수 현금만 표시) = OPI 1 세후 현금 - PSU 연말정산 현금 세금 차감액
+            const finalNetBankCash = opi1TaxInfo.netCash - psuCashTaxDeduction;
 
-            // 계좌 총 보유 주식 (OPI 2 2/3 잔여 보유분 + PSU 입고 주식)
-            const totalRetainedShares = retainedStockShares + psuReceivedShares;
-            const totalRetainedStockValue = retainedStockValue + psuNetStockValue;
+            // 계좌 총 보유 주식 (OPI 2 세후 입고 주식 100% 전량 + PSU 입고 주식)
+            const totalRetainedShares = netReceivedShares + psuReceivedShares;
+            const totalRetainedStockValue = opi2TaxInfo.netStockValue + psuNetStockValue;
 
-            // 총 세후 실수령 가치 (통장 최종 현금 + 계좌 총 보유 주식 가치)
+            // 총 세후 실수령 가치 (통장 순현금 + 계좌 총 보유 주식 가치)
             const totalCombinedValue = finalNetBankCash + totalRetainedStockValue;
             const totalTaxesPaid = opi1TaxInfo.totalTax + opi2TaxInfo.totalTax + psuTaxInfo.totalTax;
 
@@ -432,10 +441,16 @@
               preTaxStockShares,
               taxDeductedShares,
               netReceivedShares,
-              stockSellCash,
-              stockSellShares,
-              retainedStockValue,
-              retainedStockShares,
+              tranche1Shares,
+              tranche2Shares,
+              tranche3Shares,
+              lockedFromThisYearShares,
+              immediateSellableValue,
+              lockedStockValue,
+              unlockedInYearShares: 0, // 2차 패스에서 누적 해제 물량 합산
+              unlockedInYearValue: 0,
+              fromPrev1YrShares: 0,
+              fromPrev2YrShares: 0,
               isPsuYear,
               psuGrantedShares,
               psuGrossValue,
@@ -470,6 +485,21 @@
           };
         });
 
+        // 2차 패스: 연도별로 실제 매도 가능하게 풀리는(Unlock) OPI 2 주식 수 계산
+        // yr년 매도가능 해제 물량 = 당해(yr) 수령분 즉시 1/3 + 전년도(yr-1) 수령분 1년후 해제 1/3 + 2년전(yr-2) 수령분 2년후 해제 1/3
+        years.forEach(yr => {
+          divisions.forEach(div => {
+            const cur = resultsByYear[yr].divisions[div.key];
+            const prev1 = resultsByYear[yr - 1] ? resultsByYear[yr - 1].divisions[div.key].tranche2Shares : 0;
+            const prev2 = resultsByYear[yr - 2] ? resultsByYear[yr - 2].divisions[div.key].tranche3Shares : 0;
+            const unlockedShares = cur.tranche1Shares + prev1 + prev2;
+            cur.fromPrev1YrShares = prev1;
+            cur.fromPrev2YrShares = prev2;
+            cur.unlockedInYearShares = unlockedShares;
+            cur.unlockedInYearValue = unlockedShares * cur.yearStockPrice;
+          });
+        });
+
         const final2031StockPrice = resultsByYear[2031].yearStockPrice;
 
         // 5개년 누적 합계 (Cumulative Totals)
@@ -482,11 +512,8 @@
           let sumOpi2Gross = 0;
           let sumOpi2Tax = 0;
           let sumOpi2Net = 0;
-          let sumStockSellCash = 0;
-          let sumFinalNetCash = 0;
-          let sumRetainedStock = 0; // OPI 2 (2/3) + PSU 입고 주식 합산 원금
-          let sumOpi2RetainedStock = 0;
-          let sumOpi2RetainedShares = 0;
+          let sumFinalNetCash = 0; // 순수 현금 합계 (OPI 1 세후 - PSU 연말정산 세금)
+          let sumRetainedStock = 0; // OPI 2 세후주식(100%) + PSU 입고 주식 합산 원금
           let sumPsuGross = 0;
           let sumPsuTax = 0;
           let sumPsuCashTax = 0;
@@ -495,9 +522,10 @@
           let sumTotalTaxes = 0;
           let sumPreTaxShares = 0;
           let sumTaxDeductedShares = 0;
-          let sumNetReceivedShares = 0;
-          let sumRetainedShares = 0; // OPI 2 (2/3) + PSU 합산 보유 주식수
-          let sumSoldShares = 0;
+          let sumNetReceivedShares = 0; // OPI 2 5개년 입고 총 주식수 (100%)
+          let sumUnlockedOpi2Shares = 0; // 2031년 말 기준 락업 해제 완료된 OPI 2 주식수 (매도가능)
+          let sumUnlockedOpi2Value = 0;
+          let sumRetainedShares = 0; // OPI 2 (100%) + PSU 합산 총 보유 주식수
 
           years.forEach(yr => {
             const data = resultsByYear[yr].divisions[div.key];
@@ -508,10 +536,7 @@
             sumOpi2Gross += data.opi2Gross;
             sumOpi2Tax += data.opi2Tax;
             sumOpi2Net += data.opi2NetStock;
-            sumStockSellCash += data.stockSellCash;
             sumFinalNetCash += data.finalNetBankCash;
-            sumOpi2RetainedStock += data.retainedStockValue;
-            sumOpi2RetainedShares += data.retainedStockShares;
             sumPsuGross += data.psuGrossValue;
             sumPsuTax += data.psuTax;
             sumPsuCashTax += data.psuCashTaxDeduction;
@@ -522,11 +547,16 @@
             sumPreTaxShares += data.preTaxStockShares;
             sumTaxDeductedShares += data.taxDeductedShares;
             sumNetReceivedShares += data.netReceivedShares;
+            sumUnlockedOpi2Shares += data.unlockedInYearShares;
+            sumUnlockedOpi2Value += data.unlockedInYearValue;
             sumRetainedShares += data.totalRetainedShares;
-            sumSoldShares += data.stockSellShares;
           });
 
-          // 2031년 말 기준 누적 보유 주식(OPI 2 2/3 + PSU)의 평가가치 및 평가차익 계산
+          // 2031년 말 시점에도 독소조항(1년·2년 매도제한)에 묶여 있는 잔여 락업 주식 수 (30년 수령분의 1/3 + 31년 수령분의 2/3)
+          const sumStillLockedOpi2Shares = Math.max(0, sumNetReceivedShares - sumUnlockedOpi2Shares);
+          const sumStillLockedOpi2Value = sumStillLockedOpi2Shares * final2031StockPrice;
+
+          // 2031년 말 기준 누적 보유 주식(OPI 2 100% + PSU)의 평가가치 및 평가차익 계산
           const finalRetainedStockEval = stockGrowthRate !== 0
             ? sumRetainedShares * final2031StockPrice
             : sumRetainedStock;
@@ -544,10 +574,7 @@
             sumOpi2Gross,
             sumOpi2Tax,
             sumOpi2Net,
-            sumStockSellCash,
             sumFinalNetCash,
-            sumOpi2RetainedStock,
-            sumOpi2RetainedShares,
             sumPsuGross,
             sumPsuTax,
             sumPsuCashTax,
@@ -560,8 +587,11 @@
             sumPreTaxShares,
             sumTaxDeductedShares,
             sumNetReceivedShares,
+            sumUnlockedOpi2Shares,
+            sumUnlockedOpi2Value,
+            sumStillLockedOpi2Shares,
+            sumStillLockedOpi2Value,
             sumRetainedShares,
-            sumSoldShares,
             totalCombined: sumFinalNetCash + finalRetainedStockEval
           };
         });
@@ -573,12 +603,12 @@
           final2031StockPrice,
           cumulativeByDivision
         };
-      }, [headcounts, baseSalaryWon, salaryGrowthRate, stockPrice, stockGrowthRate, psuSharesPerYear, psuTaxMode, opProfits, allocationMode, opi2Mode, opi1CapWon]);
+      }, [headcounts, baseSalaryWon, salaryGrowthRate, stockPrice, stockGrowthRate, psuTotalShares, psuTaxMode, opProfits, allocationMode, opi2Mode, opi1CapWon]);
 
       // CSV 데이터 다운로드 핸들러
       const handleExportCSV = () => {
         let csv = '\uFEFF'; // Excel UTF-8 BOM
-        csv += '실적연도,수령연도,영업이익(조원),적용계약연봉(원),OPI1_한도Cap(원),사업부,OPI총배정액(원),OPI1_세전(원),OPI1_세금(원),OPI1_세후현금(원),OPI2_세전주식(원),OPI2_세금차감액(54.467%)(원),OPI2_세후입고주식가치(45.533%)(원),세전배정주식수(주),세금차감주식수(주),실제입고주식수(주),세후주식1/3매도현금화(원),1/3매도주식수(주),PSU_약정주식수(주),PSU_세전가치(원),PSU_입고주식수(주),PSU_연말정산현금세금차감(원),통장최종수령현금(원),계좌총보유주식가치(원),계좌총보유주식수(주)\n';
+        csv += '실적연도,수령연도,영업이익(조원),적용계약연봉(원),OPI1_한도Cap(원),사업부,OPI총배정액(원),OPI1_세전(원),OPI1_세금(원),OPI1_세후현금(원),OPI2_세전주식(원),OPI2_세금차감액(54.467%)(원),OPI2_세후입고주식가치(45.533%)(원),세전배정주식수(주),세금차감주식수(주),OPI2_실제입고주식수(주),당해즉시매도가능(1/3)(주),1년후해제독소조항(1/3)(주),2년후해제독소조항(1/3)(주),당해연도총해제매도가능주식수(주),PSU_약정수령주식수(주),PSU_세전가치(원),PSU_입고주식수(주),PSU_연말정산현금세금차감(원),통장순현금수령액(원),계좌총보유주식가치(원),계좌총보유주식수(주)\n';
 
         simulationData.years.forEach(yr => {
           const yrData = simulationData.resultsByYear[yr];
@@ -601,8 +631,10 @@
               d.preTaxStockShares,
               d.taxDeductedShares,
               d.netReceivedShares,
-              Math.round(d.stockSellCash),
-              d.stockSellShares,
+              d.tranche1Shares,
+              d.tranche2Shares,
+              d.tranche3Shares,
+              d.unlockedInYearShares,
               d.psuGrantedShares,
               Math.round(d.psuGrossValue),
               d.psuReceivedShares,
@@ -635,24 +667,23 @@
 - 적용 시나리오: ${SCENARIOS[selectedScenarioKey]?.name} (26년실적→27년수령 ${opProfits[2027]}조, 27년→28년 ${opProfits[2028]}조, 28년→29년 ${opProfits[2029]}조, 29년→30년 ${opProfits[2030]}조, 30년→31년 ${opProfits[2031]}조)
 - 2027년 시작 연봉: ${formatKoreanWon(baseSalaryWon)} (연 ${salaryGrowthRate}% 상승, 1.2억 원 샐러리캡 적용 → 2031년 ${formatKoreanWon(simulationData.resultsByYear[2031].yearSalaryWon)})
 - 삼성전자 주가: ${formatNumber(stockPrice)}원 (연 주가상승률 ${stockGrowthRate}%)
-- PSU 약정 (28·29·30년 10월): 회당 ${psuSharesPerYear}주 (총 ${psuSharesPerYear * 3}주, ${psuTaxMode === 'yearend_cash' ? '연말정산 현금 세금 차감' : '주식수 선차감'})
+- PSU 총 약정 주식: 총 ${psuTotalShares}주 (28·29·30년 10월 1/3씩 분할 수령, ${psuTaxMode === 'yearend_cash' ? '연말정산 현금 세금 차감' : '주식수 선차감'})
 
 [1. 메모리사업부 (인원: ${formatNumber(headcounts.memory)}명)]
 • 5개년 세후 총 수령 가치: ${formatKoreanWon(memCum.totalCombined)}
-• OPI 1 세후 현금 총액: ${formatKoreanWon(memCum.sumOpi1Net)}
+• 통장 순현금 수령 총액 (OPI 1 세후 - PSU 연말정산 세금): ${formatKoreanWon(memCum.sumFinalNetCash)} (OPI 1 세후 원금 ${formatKoreanWon(memCum.sumOpi1Net)})
 • OPI 2 세후 입고 주식 총액: ${formatKoreanWon(memCum.sumOpi2Net)} (입고 ${formatNumber(memCum.sumNetReceivedShares)}주 / 세금차감 ${formatNumber(memCum.sumTaxDeductedShares)}주)
-• OPI 2 주식 1/3 매도 현금화: ${formatKoreanWon(memCum.sumStockSellCash)} (${formatNumber(memCum.sumSoldShares)}주 매도)
-• PSU 약정 주식 (28~30년 10월): +${formatNumber(memCum.sumPsuReceivedShares)}주 입고 (연말정산 세금 -${formatKoreanWon(memCum.sumPsuCashTax)})
-• 통장 최종 수령 현금: ${formatKoreanWon(memCum.sumFinalNetCash)}
-• 계좌 잔여 총 보유 주식 (OPI 2 2/3 + PSU): ${formatKoreanWon(memCum.finalRetainedStockEval)} (총 ${formatNumber(memCum.sumRetainedShares)}주 보유)
+  ↳ [독소조항 락업 현황(31년말 기준)] 매도가능(락업해제): ${formatNumber(memCum.sumUnlockedOpi2Shares)}주 / 2032~33년 매도제한 묶인 주식: ${formatNumber(memCum.sumStillLockedOpi2Shares)}주
+• PSU 약정 주식 (28~30년 10월 1/3씩): +${formatNumber(memCum.sumPsuReceivedShares)}주 입고 (연말정산 세금 -${formatKoreanWon(memCum.sumPsuCashTax)})
+• 계좌 총 보유 주식 (OPI 2 100% + PSU): ${formatKoreanWon(memCum.finalRetainedStockEval)} (총 ${formatNumber(memCum.sumRetainedShares)}주 보유)
 
 [2. 공통부서 (인원: ${formatNumber(headcounts.common)}명)]
 • 5개년 세후 총 수령 가치: ${formatKoreanWon(comCum.totalCombined)}
-• 통장 최종 현금: ${formatKoreanWon(comCum.sumFinalNetCash)} / 총 보유주식: ${formatKoreanWon(comCum.finalRetainedStockEval)} (${formatNumber(comCum.sumRetainedShares)}주)
+• 통장 순현금: ${formatKoreanWon(comCum.sumFinalNetCash)} / 총 보유주식: ${formatKoreanWon(comCum.finalRetainedStockEval)} (${formatNumber(comCum.sumRetainedShares)}주)
 
 [3. 비메모리사업부 (인원: ${formatNumber(headcounts.nonMemory)}명)]
 • 5개년 세후 총 수령 가치: ${formatKoreanWon(nonCum.totalCombined)}
-• 통장 최종 현금: ${formatKoreanWon(nonCum.sumFinalNetCash)} / 총 보유주식: ${formatKoreanWon(nonCum.finalRetainedStockEval)} (${formatNumber(nonCum.sumRetainedShares)}주)
+• 통장 순현금: ${formatKoreanWon(nonCum.sumFinalNetCash)} / 총 보유주식: ${formatKoreanWon(nonCum.finalRetainedStockEval)} (${formatNumber(nonCum.sumRetainedShares)}주)
 `;
 
         navigator.clipboard.writeText(text).then(() => {
@@ -714,11 +745,13 @@
                     </div>
                   </div>
 
-                  <div className="p-4 bg-blue-950/40 border border-blue-800/60 rounded-xl text-xs">
-                    <h5 className="font-bold text-blue-300 text-sm mb-1">💡 세후 입고 주식의 1/3 현금화 및 2/3 보유</h5>
+                  <div className="p-4 bg-blue-950/40 border border-blue-800/60 rounded-xl text-xs space-y-1.5">
+                    <h5 className="font-bold text-blue-300 text-sm">🔒 OPI 2 매도제한 독소조항 (즉시 1/3 · 1년후 1/3 · 2년후 1/3) & PSU 분할 수령</h5>
                     <p className="text-blue-100/90">
-                      세금(54.467%)만큼 주식 수가 차감된 뒤 실제로 계좌에 입고된 <strong>세후 순주식(45.533%) 중 1/3을 매도하여 현금화</strong>(세전 대비 약 15.18%)하고, <strong>나머지 2/3(세전 대비 약 30.36%)는 주식으로 보유</strong>합니다.
-                      따라서 최종적으로 손에 쥐는 가용 현금은 <strong>[OPI 1 세후 현금 + 세후 주식 1/3 매도 현금]</strong>이 됩니다.
+                      • <strong>OPI 2 매도제한(독소조항):</strong> 세금(54.467%) 선공제 후 계좌에 입고된 세후 순주식(45.533%)은 <strong>수령 즉시 1/3만 매도 가능</strong>하며, 나머지 <strong>1/3은 1년 후</strong>, 마지막 <strong>1/3은 2년 후</strong>에야 매도 제한이 풀립니다. (주식을 강제 매도하여 현금에 합산하지 않고, 순수 현금과 보유 주식을 분리 표시합니다.)
+                    </p>
+                    <p className="text-purple-200/90">
+                      • <strong>PSU 약정 주식:</strong> 직급별 총 약정 주식(<strong>CL2 총 400주 / CL3·CL4 총 600주</strong>)을 <strong>2028년 10월, 2029년 10월, 2030년 10월에 1/3씩 분할 수령</strong>하며, 연말정산 시 현금에서 세금을 정산합니다.
                     </p>
                   </div>
                 </div>
@@ -754,7 +787,7 @@
                     </span>
                   </div>
                   <p className="text-xs text-slate-400">
-                    영업이익 10.5% 재원 (OPI 1 + OPI 2) | 주식 세금(54.467%) 주식수 선공제 후 1/3 현금화 계산기
+                    영업이익 10.5% (OPI 1 + OPI 2 독소조항 1/3·1년·2년 락업) & PSU (CL2 400주 / CL3·4 600주 1/3 분할) 계산기
                   </p>
                 </div>
               </div>
@@ -803,7 +836,7 @@
                     </span>
                   </div>
                   <p className="text-xs text-slate-400 mt-1">
-                    당해 연도 영업이익(2026~2030년)을 재원으로 이듬해(2027~2031년)에 성과급을 수령합니다. 또한 28·29·30년 10월에는 PSU(CL3 기본 200주씩)가 추가 지급됩니다.
+                    당해 연도 영업이익(2026~2030년)을 재원으로 이듬해(2027~2031년)에 성과급을 수령합니다. 또한 28·29·30년 10월에는 PSU(CL2 총 400주 / CL3·4 총 600주)를 1/3씩 분할 수령합니다.
                   </p>
                 </div>
 
@@ -846,7 +879,7 @@
                   const perfYr = yr - 1;
                   const val = opProfits[yr] || 0;
                   const isExceeded = val > 100;
-                  const isPsuYr = yr === 2028 || yr === 2029 || yr === 2030;
+                  const yrPsuShares = simulationData.resultsByYear[yr].psuGrantedShares;
                   return (
                     <div
                       key={yr}
@@ -904,9 +937,9 @@
                             <span>⚪ OPI 1만 지급 (OPI 2 미발동)</span>
                           </div>
                         )}
-                        {isPsuYr && psuSharesPerYear > 0 && (
+                        {yrPsuShares > 0 && (
                           <div className="flex items-center justify-center gap-1 py-0.5 px-2 rounded-lg bg-purple-950/70 border border-purple-500/70 text-purple-200 text-[10px] font-bold">
-                            <span>🎁 {String(yr).slice(2)}년 10월 PSU +{psuSharesPerYear}주 수령</span>
+                            <span>🎁 {String(yr).slice(2)}년 10월 PSU +{yrPsuShares}주 (1/3 분할)</span>
                           </div>
                         )}
                       </div>
@@ -934,9 +967,9 @@
                   </p>
                 </div>
 
-                <div className="flex items-center gap-2 text-xs bg-blue-950/50 border border-blue-800/70 px-3 py-1.5 rounded-xl text-blue-300 font-medium">
-                  <span>💡 세금 원천징수 방식:</span>
-                  <strong className="text-white">세금(54.467%)만큼 주식수 차감 → 세후 순주식(45.533%) 입고</strong>
+                <div className="flex items-center gap-2 text-xs bg-amber-950/50 border border-amber-700/70 px-3 py-1.5 rounded-xl text-amber-300 font-medium">
+                  <span>🔒 OPI 2 독소조항:</span>
+                  <strong className="text-white">세후 입고 주식 중 즉시 1/3 · 1년후 1/3 · 2년후 1/3 매도가능 (현금 강제합산 제외)</strong>
                 </div>
               </div>
 
@@ -986,7 +1019,7 @@
 
                         <div className="flex justify-between items-center bg-navy-900/60 p-2 rounded-lg">
                           <div>
-                            <span className="text-slate-300 block">📈 OPI 2 세후 입고 주식 총액 (45.533%)</span>
+                            <span className="text-slate-300 block">📈 OPI 2 세후 입고 주식 총액 (45.533% 전량)</span>
                             <span className="text-[10px] text-slate-400">
                               세전 {formatNumber(cum.sumPreTaxShares)}주 중 세금 {formatNumber(cum.sumTaxDeductedShares)}주 차감 → <strong>{formatNumber(cum.sumNetReceivedShares)}주 입고</strong>
                             </span>
@@ -994,26 +1027,42 @@
                           <span className="font-semibold text-amber-400 whitespace-nowrap ml-2">{formatKoreanWon(cum.sumOpi2Net)}</span>
                         </div>
 
-                        <div className="flex justify-between items-center bg-navy-900/60 p-2 rounded-lg">
-                          <div>
-                            <span className="text-slate-300 block">🔄 OPI 2 입고 주식의 1/3 매도 현금화액</span>
-                            <span className="text-[10px] text-slate-400">
-                              세후 입고 주식 중 약 {formatNumber(cum.sumSoldShares)}주 매도
+                        {/* OPI 2 매도제한 독소조항 (즉시 1/3 · 1년후 1/3 · 2년후 1/3) 31년 말 기준 현황 */}
+                        <div className="bg-amber-950/25 border border-amber-700/50 p-2.5 rounded-lg space-y-1.5">
+                          <div className="flex justify-between items-center">
+                            <span className="text-amber-300 font-bold text-[11px]">
+                              🔒 OPI 2 독소조항 (즉시 1/3 · 1년후 1/3 · 2년후 1/3)
                             </span>
+                            <span className="text-[10px] text-slate-400">2031년 말 기준</span>
                           </div>
-                          <span className="font-bold text-white whitespace-nowrap ml-2">{formatKoreanWon(cum.sumStockSellCash)}</span>
+                          <div className="grid grid-cols-2 gap-1.5 text-[11px]">
+                            <div className="bg-navy-900/80 border border-slate-700/80 rounded p-1.5">
+                              <span className="text-teal-300 font-semibold block text-[10px]">🔓 락업 해제 (처분 가능)</span>
+                              <span className="font-bold text-white">{formatNumber(cum.sumUnlockedOpi2Shares)}주</span>
+                              <span className="text-[10px] text-slate-400 block">
+                                ({formatKoreanWon(cum.sumUnlockedOpi2Value)})
+                              </span>
+                            </div>
+                            <div className="bg-navy-900/80 border border-amber-800/60 rounded p-1.5">
+                              <span className="text-amber-400 font-semibold block text-[10px]">🔐 독소조항 묶임 (32~33년 해제)</span>
+                              <span className="font-bold text-amber-200">{formatNumber(cum.sumStillLockedOpi2Shares)}주</span>
+                              <span className="text-[10px] text-slate-400 block">
+                                ({formatKoreanWon(cum.sumStillLockedOpi2Value)})
+                              </span>
+                            </div>
+                          </div>
                         </div>
 
-                        {/* PSU (28·29·30년 10월 약정 주식) 내역 */}
-                        {psuSharesPerYear > 0 && (
+                        {/* PSU (28·29·30년 10월 1/3씩 약정 주식) 내역 */}
+                        {psuTotalShares > 0 && (
                           <div className="flex justify-between items-center bg-purple-950/30 border border-purple-700/50 p-2 rounded-lg">
                             <div>
                               <span className="text-purple-200 font-semibold block">
-                                🎁 PSU 약정 주식 (28·29·30년 10월, 총 {formatNumber(psuSharesPerYear * 3)}주)
+                                🎁 PSU 약정 주식 (28·29·30년 1/3씩, 총 {formatNumber(psuTotalShares)}주)
                               </span>
                               <span className="text-[10px] text-purple-300/90">
                                 {psuTaxMode === 'yearend_cash'
-                                  ? `${formatNumber(cum.sumPsuReceivedShares)}주 전량 입고 / 연말정산 세금 -${formatKoreanWon(cum.sumPsuCashTax)} 현금차감`
+                                  ? `${formatNumber(cum.sumPsuReceivedShares)}주 입고 / 연말정산 세금 -${formatKoreanWon(cum.sumPsuCashTax)} 현금차감`
                                   : `세금 차감 후 세후 ${formatNumber(cum.sumPsuReceivedShares)}주 입고`}
                               </span>
                             </div>
@@ -1023,12 +1072,12 @@
                           </div>
                         )}
 
-                        {/* Highlight: Final Bank Cash */}
+                        {/* Highlight: Final Bank Cash (순수 현금) */}
                         <div className="p-2.5 rounded-xl border bg-emerald-950/30 border-emerald-800/80 text-emerald-300 flex justify-between items-center">
                           <div>
-                            <span className="font-bold block text-xs">통장 최종 수령 현금 합계</span>
+                            <span className="font-bold block text-xs">통장 순현금 수령 합계 (주식 미매도 기준)</span>
                             <span className="text-[10px] opacity-80">
-                              (OPI 1 세후 + OPI 2 1/3 매도{cum.sumPsuCashTax > 0 ? ` - PSU 연말정산 세금` : ''})
+                              (OPI 1 세후 현금{cum.sumPsuCashTax > 0 ? ` - PSU 연말정산 세금 ${formatKoreanWon(cum.sumPsuCashTax)}` : ''})
                             </span>
                           </div>
                           <div className="text-right">
@@ -1038,14 +1087,14 @@
                           </div>
                         </div>
 
-                        {/* Highlight: Retained Stock */}
+                        {/* Highlight: Retained Stock (OPI 2 100% + PSU) */}
                         <div className="p-2.5 bg-blue-950/40 border border-blue-800/80 rounded-xl flex justify-between items-center text-blue-200">
                           <div>
                             <span className="font-bold block text-xs">
-                              계좌 잔여 보유 주식 총 가치 {stockGrowthRate !== 0 && `(31년 주가 ${formatNumber(simulationData.final2031StockPrice)}원 평가)`}
+                              계좌 총 보유 주식 가치 {stockGrowthRate !== 0 && `(31년 주가 ${formatNumber(simulationData.final2031StockPrice)}원 평가)`}
                             </span>
                             <span className="text-[10px] text-blue-400 block">
-                              총 <strong>{formatNumber(cum.sumRetainedShares)}주</strong> 보유 (OPI 2 잔여 {formatNumber(cum.sumOpi2RetainedShares)}주 + PSU {formatNumber(cum.sumPsuReceivedShares)}주)
+                              총 <strong>{formatNumber(cum.sumRetainedShares)}주</strong> 보유 (OPI 2 전량 {formatNumber(cum.sumNetReceivedShares)}주 + PSU {formatNumber(cum.sumPsuReceivedShares)}주)
                             </span>
                             {stockGrowthRate !== 0 && (
                               <span className={`text-[10px] font-semibold block ${cum.retainedStockGain >= 0 ? 'text-amber-300' : 'text-red-300'}`}>
@@ -1206,10 +1255,10 @@
                       </div>
                     </div>
 
-                    {/* 연간 주가 상승률 (보유 주식 2/3 평가가치 연동) */}
+                    {/* 연간 주가 상승률 (보유 주식 평가가치 연동) */}
                     <div className="pt-1.5 border-t border-slate-800/60">
                       <div className="flex justify-between items-center mb-1 text-xs">
-                        <span className="text-slate-300 font-semibold">연간 주가 상승률 (2/3 보유주식 평가)</span>
+                        <span className="text-slate-300 font-semibold">연간 주가 상승률 (보유주식 평가)</span>
                         <span className="font-bold text-amber-300 text-xs">
                           연 {stockGrowthRate >= 0 ? `+${stockGrowthRate}%` : `${stockGrowthRate}%`} (31년 {formatNumber(simulationData.final2031StockPrice)}원)
                         </span>
@@ -1232,44 +1281,45 @@
                   </div>
                 </div>
 
-                {/* 2. PSU (28·29·30년 10월 약정) & 사업부별 인원수 설정 */}
+                {/* 2. PSU (28·29·30년 10월 1/3 분할 약정) & 사업부별 인원수 설정 */}
                 <div className="space-y-3 bg-navy-900/50 p-4 rounded-xl border border-slate-700/70">
                   <div className="flex items-center justify-between">
                     <h4 className="text-xs font-bold text-purple-400 uppercase tracking-wider">
-                      2. PSU 약정(28~30년 10월) 및 사업부 인원
+                      2. PSU 약정(28~30년 1/3씩) 및 사업부 인원
                     </h4>
                     <span className="text-[10px] px-2 py-0.5 rounded bg-purple-950/80 text-purple-300 border border-purple-700/50 font-semibold">
-                      CL3 기본 200주×3회
+                      CL2 400주 / CL3·4 600주
                     </span>
                   </div>
 
                   {/* PSU 설정 박스 */}
                   <div className="p-2.5 bg-purple-950/25 border border-purple-700/40 rounded-lg space-y-2 text-xs">
                     <div className="flex justify-between items-center">
-                      <span className="text-purple-200 font-semibold">28·29·30년 10월 PSU 회당 수령</span>
-                      <span className="font-bold text-purple-300">{psuSharesPerYear}주/년 (총 {psuSharesPerYear * 3}주)</span>
+                      <span className="text-purple-200 font-semibold">PSU 총 약정 주식 (28·29·30년 1/3씩)</span>
+                      <span className="font-bold text-purple-300">
+                        총 {psuTotalShares}주 ({simulationData.resultsByYear[2028].psuGrantedShares}/{simulationData.resultsByYear[2029].psuGrantedShares}/{simulationData.resultsByYear[2030].psuGrantedShares}주)
+                      </span>
                     </div>
                     <input
                       type="range"
                       min="0"
-                      max="500"
-                      step="50"
-                      value={psuSharesPerYear}
-                      onChange={(e) => setPsuSharesPerYear(Number(e.target.value))}
+                      max="900"
+                      step="10"
+                      value={psuTotalShares}
+                      onChange={(e) => setPsuTotalShares(Number(e.target.value))}
                       className="w-full accent-purple-500 cursor-pointer"
                     />
                     <div className="flex flex-wrap gap-1">
                       {[
                         { label: '미적용(0주)', val: 0 },
-                        { label: 'CL2 (100주)', val: 100 },
-                        { label: 'CL3 (200주·기본)', val: 200 },
-                        { label: 'CL4 (300주)', val: 300 }
+                        { label: 'CL2 (총 400주 · 연 133주)', val: 400 },
+                        { label: 'CL3·CL4 (총 600주 · 연 200주·기본)', val: 600 }
                       ].map(opt => (
                         <button
                           key={opt.val}
-                          onClick={() => setPsuSharesPerYear(opt.val)}
+                          onClick={() => setPsuTotalShares(opt.val)}
                           className={`px-2 py-0.5 rounded text-[10px] font-semibold border transition ${
-                            psuSharesPerYear === opt.val
+                            psuTotalShares === opt.val
                               ? 'bg-purple-600 text-white border-purple-400'
                               : 'bg-navy-950 text-slate-400 border-slate-700 hover:text-white'
                           }`}
@@ -1293,7 +1343,7 @@
                           }`}
                         >
                           연말정산 현금 차감 (기본)
-                          <span className="block text-[9px] opacity-80">200주 전량입고·세금은 현금납부</span>
+                          <span className="block text-[9px] opacity-80">1/3 전량입고·세금은 현금납부</span>
                         </button>
                         <button
                           onClick={() => setPsuTaxMode('stock_deduct')}
@@ -1431,7 +1481,8 @@
                   <div className="text-[11px] text-slate-400 pt-1 border-t border-slate-700/80 space-y-0.5">
                     <div>• 성과급 총 재원 비율: <span className="text-white font-semibold">영업이익의 10.5%</span></div>
                     <div>• OPI 2 발동 허들: <span className="text-amber-400 font-semibold">영업이익 100조 원 초과</span></div>
-                    <div>• OPI 2 주식수 차감 세율: <span className="text-red-400 font-semibold">54.467% (세후 45.533% 주식 수령)</span></div>
+                    <div>• OPI 2 세금 선공제: <span className="text-red-400 font-semibold">54.467% 차감 → 45.533% 입고</span></div>
+                    <div>• OPI 2 독소조항: <span className="text-amber-300 font-semibold">즉시 1/3 · 1년후 1/3 · 2년후 1/3 매도가능</span></div>
                   </div>
 
                 </div>
@@ -1449,17 +1500,21 @@
                 <div className="flex justify-between items-center mb-4">
                   <div>
                     <h3 className="font-bold text-white text-sm flex items-center gap-2">
-                      <span>📈</span> 사업부별 5개년 세후 총 수령가치 및 현금·주식 비중
+                      <span>📈</span> 사업부별 5개년 세후 총 수령가치 및 현금·주식(락업해제/묶임) 비중
                     </h3>
-                    <p className="text-[11px] text-slate-400">통장 수령 현금(OPI 1 + 세후주식 1/3 매도) vs 잔여 2/3 보유 주식</p>
+                    <p className="text-[11px] text-slate-400">통장 순현금(OPI 1 - PSU세금) vs 처분가능 주식(락업해제+PSU) vs 독소조항 묶인 주식(32~33년 해제)</p>
                   </div>
                 </div>
 
                 <div className="space-y-4 pt-2">
                   {simulationData.divisions.map(div => {
                     const cum = simulationData.cumulativeByDivision[div.key];
-                    const cashRatio = cum.totalCombined > 0 ? (cum.sumFinalNetCash / cum.totalCombined) * 100 : 50;
-                    const stockRatio = cum.totalCombined > 0 ? (cum.sumRetainedStock / cum.totalCombined) * 100 : 50;
+                    const unlockedPlusPsuVal = cum.sumUnlockedOpi2Value + cum.sumPsuStockValue;
+                    const lockedVal = cum.sumStillLockedOpi2Value;
+                    const totalVal = Math.max(1, cum.sumFinalNetCash + unlockedPlusPsuVal + lockedVal);
+                    const cashRatio = Math.max(0, (cum.sumFinalNetCash / totalVal) * 100);
+                    const unlockedRatio = Math.max(0, (unlockedPlusPsuVal / totalVal) * 100);
+                    const lockedRatio = Math.max(0, (lockedVal / totalVal) * 100);
                     
                     return (
                       <div key={div.key} className="space-y-1.5">
@@ -1471,51 +1526,63 @@
                         {/* Progress Bar */}
                         <div className="w-full bg-navy-900 rounded-full h-5 overflow-hidden flex border border-slate-700/60 p-0.5">
                           <div
-                            style={{ width: `${Math.max(5, cashRatio)}%` }}
+                            style={{ width: `${Math.max(4, cashRatio)}%` }}
                             className="bg-emerald-500 rounded-l-full h-full flex items-center justify-center text-[10px] font-bold text-slate-900 transition-all duration-300"
-                            title={`통장 수령 현금: ${formatKoreanWon(cum.sumFinalNetCash)}`}
+                            title={`통장 순현금: ${formatKoreanWon(cum.sumFinalNetCash)}`}
                           >
                             현금 {Math.round(cashRatio)}%
                           </div>
                           <div
-                            style={{ width: `${Math.max(5, stockRatio)}%` }}
-                            className="bg-blue-600 rounded-r-full h-full flex items-center justify-center text-[10px] font-bold text-white transition-all duration-300"
-                            title={`보유 주식(2/3): ${formatKoreanWon(cum.sumRetainedStock)}`}
+                            style={{ width: `${Math.max(4, unlockedRatio)}%` }}
+                            className="bg-teal-500 h-full flex items-center justify-center text-[10px] font-bold text-slate-950 transition-all duration-300"
+                            title={`락업해제(매도가능)+PSU: ${formatKoreanWon(unlockedPlusPsuVal)}`}
                           >
-                            주식 {Math.round(stockRatio)}%
+                            해제주식 {Math.round(unlockedRatio)}%
+                          </div>
+                          <div
+                            style={{ width: `${Math.max(4, lockedRatio)}%` }}
+                            className="bg-amber-600 rounded-r-full h-full flex items-center justify-center text-[10px] font-bold text-white transition-all duration-300"
+                            title={`독소조항 락업(32~33년 해제): ${formatKoreanWon(lockedVal)}`}
+                          >
+                            락업 {Math.round(lockedRatio)}%
                           </div>
                         </div>
 
-                        <div className="flex justify-between text-[10px] text-slate-400 px-1">
-                          <span>통장 현금: {formatKoreanWon(cum.sumFinalNetCash)}</span>
-                          <span>2/3 보유주식: {formatKoreanWon(cum.sumRetainedStock)} ({formatNumber(cum.sumRetainedShares)}주)</span>
+                        <div className="flex flex-wrap justify-between text-[10px] text-slate-400 px-1 gap-1">
+                          <span>순현금: {formatKoreanWon(cum.sumFinalNetCash)}</span>
+                          <span className="text-teal-300">해제+PSU: {formatNumber(cum.sumUnlockedOpi2Shares + cum.sumPsuReceivedShares)}주</span>
+                          <span className="text-amber-300">독소조항 묶임: {formatNumber(cum.sumStillLockedOpi2Shares)}주</span>
                         </div>
                       </div>
                     );
                   })}
 
-                  <div className="flex items-center justify-center gap-4 pt-3 border-t border-slate-700/60 text-[11px] text-slate-400">
+                  <div className="flex flex-wrap items-center justify-center gap-4 pt-3 border-t border-slate-700/60 text-[11px] text-slate-400">
                     <div className="flex items-center gap-1.5">
                       <span className="w-3 h-3 rounded-full bg-emerald-500 inline-block"></span>
-                      <span>통장 수령 현금 (OPI 1 세후 + 세후주식 1/3 매도)</span>
+                      <span>통장 순현금 (OPI 1 - PSU세금)</span>
                     </div>
                     <div className="flex items-center gap-1.5">
-                      <span className="w-3 h-3 rounded-full bg-blue-600 inline-block"></span>
-                      <span>계좌 보유 주식 (세후주식의 2/3)</span>
+                      <span className="w-3 h-3 rounded-full bg-teal-500 inline-block"></span>
+                      <span>매도가능 주식 (OPI 2 락업해제 + PSU)</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-3 h-3 rounded-full bg-amber-600 inline-block"></span>
+                      <span>독소조항 묶인 주식 (32~33년 해제 대기)</span>
                     </div>
                   </div>
                 </div>
               </div>
 
-              {/* Chart 2: Year-by-Year Stacked Cash Flow Breakdown */}
+              {/* Chart 2: Year-by-Year Stacked Breakdown */}
               <div className="bg-navy-800/80 border border-slate-700/80 rounded-2xl p-5 shadow-lg backdrop-blur">
                 <div className="flex justify-between items-center mb-3">
                   <div>
                     <h3 className="font-bold text-white text-sm flex items-center gap-2">
-                      <span>📊</span> 연도별 배정액 분해 (메모리사업부 기준)
+                      <span>📊</span> 연도별 배정액 및 독소조항 락업 분해 (메모리사업부 기준)
                     </h3>
                     <p className="text-[11px] text-slate-400">
-                      OPI 1 세후현금 vs 세후주식 1/3 현금화 vs 2/3 보유주식 vs 공제 세금(주식차감 포함)
+                      OPI 1 세후현금 vs 당해 즉시 매도가능(1/3) vs 1·2년후 해제 독소조항(2/3) vs 공제 세금
                     </p>
                   </div>
                 </div>
@@ -1526,15 +1593,15 @@
                       350000000,
                       ...simulationData.years.map(y => {
                         const m = simulationData.resultsByYear[y].divisions.memory;
-                        return m.opi1NetCash + m.stockSellCash + m.retainedStockValue + m.totalTaxesPaid;
+                        return m.opi1NetCash + m.immediateSellableValue + m.lockedStockValue + m.psuNetStockValue + m.totalTaxesPaid;
                       })
                     );
                     return simulationData.years.map(yr => {
                       const data = simulationData.resultsByYear[yr].divisions.memory;
                       const maxChartWon = maxGross * 1.05;
                       const opi1Height = Math.min(100, (data.opi1NetCash / maxChartWon) * 100);
-                      const sellHeight = Math.min(100, (data.stockSellCash / maxChartWon) * 100);
-                      const stockHeight = Math.min(100, (data.retainedStockValue / maxChartWon) * 100);
+                      const immHeight = Math.min(100, (data.immediateSellableValue / maxChartWon) * 100);
+                      const lockHeight = Math.min(100, ((data.lockedStockValue + data.psuNetStockValue) / maxChartWon) * 100);
                       const taxHeight = Math.min(100, (data.totalTaxesPaid / maxChartWon) * 100);
 
                       return (
@@ -1552,14 +1619,14 @@
                               title={`OPI 1 세후현금: ${formatKoreanWon(data.opi1NetCash)}`}
                             ></div>
                             <div
-                              style={{ height: `${sellHeight}%` }}
+                              style={{ height: `${immHeight}%` }}
                               className="bg-teal-400 w-full"
-                              title={`세후주식 1/3 매도액: ${formatKoreanWon(data.stockSellCash)}`}
+                              title={`당해 즉시 매도가능(1/3): ${formatKoreanWon(data.immediateSellableValue)} (${formatNumber(data.tranche1Shares)}주)`}
                             ></div>
                             <div
-                              style={{ height: `${stockHeight}%` }}
-                              className="bg-blue-600 w-full"
-                              title={`세후주식 2/3 보유: ${formatKoreanWon(data.retainedStockValue)}`}
+                              style={{ height: `${lockHeight}%` }}
+                              className="bg-amber-500 w-full"
+                              title={`1~2년 독소조항 락업(2/3)+PSU: ${formatKoreanWon(data.lockedStockValue + data.psuNetStockValue)}`}
                             ></div>
                             <div
                               style={{ height: `${taxHeight}%` }}
@@ -1583,11 +1650,11 @@
                   </div>
                   <div className="flex items-center gap-1">
                     <span className="w-2.5 h-2.5 bg-teal-400 rounded"></span>
-                    <span>세후주식 1/3 매도액</span>
+                    <span>당해 즉시 매도가능(1/3)</span>
                   </div>
                   <div className="flex items-center gap-1">
-                    <span className="w-2.5 h-2.5 bg-blue-600 rounded"></span>
-                    <span>2/3 보유주식</span>
+                    <span className="w-2.5 h-2.5 bg-amber-500 rounded"></span>
+                    <span>1·2년후 해제 독소조항(2/3)+PSU</span>
                   </div>
                   <div className="flex items-center gap-1">
                     <span className="w-2.5 h-2.5 bg-red-500/70 rounded"></span>
@@ -1608,7 +1675,7 @@
                     <span>📋</span> 연도별 상세 시뮬레이션 데이터 테이블
                   </h3>
                   <p className="text-xs text-slate-400">
-                    OPI 2 세금(54.467%)만큼 주식수를 선차감한 후 실제 입고된 주식(45.533%)과 1/3 현금화 내역을 확인하세요
+                    OPI 2 세후 입고 주식의 매도제한 독소조항(즉시 1/3 · 1년후 1/3 · 2년후 1/3)과 PSU(1/3 분할 수령), 통장 순현금을 확인하세요
                   </p>
                 </div>
 
@@ -1667,11 +1734,11 @@
                       {selectedDivisionTab === 'all' && <th className="p-3">사업부</th>}
                       <th className="p-3">OPI 총 배정액</th>
                       <th className="p-3">OPI 1 (세후/세전 현금)</th>
-                      <th className="p-3">OPI 2 (세후입고/세전 주식)</th>
-                      <th className="p-3">OPI 2 입고 주식수</th>
-                      <th className="p-3">OPI 2 1/3 매도액</th>
-                      <th className="p-3 text-purple-300">PSU 약정 (10월)</th>
-                      <th className="p-3 text-emerald-300 font-black">통장 최종 현금</th>
+                      <th className="p-3">OPI 2 세후 입고 주식(100%)</th>
+                      <th className="p-3 text-amber-300">🔒 OPI 2 독소조항 분할 (즉시·1년·2년)</th>
+                      <th className="p-3 text-teal-300">🔓 당해 매도가능 해제 주식</th>
+                      <th className="p-3 text-purple-300">🎁 PSU 약정 (10월 1/3씩)</th>
+                      <th className="p-3 text-emerald-300 font-black">통장 순현금 수령액</th>
                       <th className="p-3 text-blue-300 font-black">계좌 총 보유 주식</th>
                     </tr>
                   </thead>
@@ -1728,31 +1795,51 @@
                               </span>
                             </td>
                             <td className="p-3">
-                              <span className="text-amber-400 font-semibold block">
-                                {d.opi2Gross > 0 ? formatKoreanWon(d.opi2NetStock) : '-'}
-                              </span>
-                              <span className="text-[10px] text-slate-400">
-                                {d.opi2Gross > 0 ? `세전 ${formatKoreanWon(d.opi2Gross)}` : '미발동'}
-                              </span>
+                              {d.netReceivedShares > 0 ? (
+                                <div>
+                                  <span className="font-bold text-amber-300 block">
+                                    {formatNumber(d.netReceivedShares)}주 ({formatKoreanWon(d.opi2NetStock)})
+                                  </span>
+                                  <span className="text-[10px] text-slate-400 block">
+                                    세전 {formatNumber(d.preTaxStockShares)}주 - 세금 {formatNumber(d.taxDeductedShares)}주
+                                  </span>
+                                  <span className="text-[9px] text-slate-500">
+                                    기준주가 {formatNumber(d.yearStockPrice)}원
+                                  </span>
+                                </div>
+                              ) : (
+                                <span className="text-slate-500">미발동</span>
+                              )}
                             </td>
                             <td className="p-3">
                               {d.netReceivedShares > 0 ? (
-                                <div>
-                                  <span className="font-bold text-white block">{formatNumber(d.netReceivedShares)}주 입고</span>
-                                  <span className="text-[10px] text-slate-400 block">
-                                    (세전 {formatNumber(d.preTaxStockShares)}주 - 세금 {formatNumber(d.taxDeductedShares)}주)
-                                  </span>
-                                  <span className="text-[9px] text-amber-400/90">
-                                    기준주가 {formatNumber(d.yearStockPrice)}원
-                                  </span>
+                                <div className="space-y-0.5 text-[10px]">
+                                  <div className="text-teal-300 font-semibold">
+                                    • 즉시(1/3): {formatNumber(d.tranche1Shares)}주
+                                  </div>
+                                  <div className="text-amber-300">
+                                    • 1년후({String(yr + 1).slice(2)}년): {formatNumber(d.tranche2Shares)}주
+                                  </div>
+                                  <div className="text-orange-400">
+                                    • 2년후({String(yr + 2).slice(2)}년): {formatNumber(d.tranche3Shares)}주
+                                  </div>
                                 </div>
                               ) : '-'}
                             </td>
                             <td className="p-3">
-                              {d.stockSellCash > 0 ? (
+                              {d.unlockedInYearShares > 0 ? (
                                 <div>
-                                  <span className="text-white font-semibold block">{formatKoreanWon(d.stockSellCash)}</span>
-                                  <span className="text-[10px] text-slate-400">{formatNumber(d.stockSellShares)}주 매도</span>
+                                  <span className="text-teal-300 font-bold block">
+                                    🔓 {formatNumber(d.unlockedInYearShares)}주 해제
+                                  </span>
+                                  <span className="text-[10px] text-slate-300 block">
+                                    ({formatKoreanWon(d.unlockedInYearValue)})
+                                  </span>
+                                  <span className="text-[9px] text-slate-400 block">
+                                    당해 {formatNumber(d.tranche1Shares)}주
+                                    {d.fromPrev1YrShares > 0 ? ` + 1년경과 ${formatNumber(d.fromPrev1YrShares)}주` : ''}
+                                    {d.fromPrev2YrShares > 0 ? ` + 2년경과 ${formatNumber(d.fromPrev2YrShares)}주` : ''}
+                                  </span>
                                 </div>
                               ) : '-'}
                             </td>
@@ -1781,7 +1868,7 @@
                                 {formatKoreanWon(d.finalNetBankCash)}
                               </span>
                               <span className="text-[10px] text-slate-400">
-                                OPI 1 + 1/3매도{d.psuCashTaxDeduction > 0 ? ' - PSU세금' : ''}
+                                OPI 1 세후{d.psuCashTaxDeduction > 0 ? ' - PSU세금' : ' (순수현금)'}
                               </span>
                             </td>
                             <td className="p-3">
@@ -1790,7 +1877,7 @@
                               </span>
                               {d.totalRetainedShares > 0 && (
                                 <span className="text-[10px] text-blue-400 block">
-                                  총 {formatNumber(d.totalRetainedShares)}주 (OPI2 {formatNumber(d.retainedStockShares)}주{d.psuReceivedShares > 0 ? ` + PSU ${formatNumber(d.psuReceivedShares)}주` : ''})
+                                  총 {formatNumber(d.totalRetainedShares)}주 (OPI2 {formatNumber(d.netReceivedShares)}주{d.psuReceivedShares > 0 ? ` + PSU ${formatNumber(d.psuReceivedShares)}주` : ''})
                                 </span>
                               )}
                             </td>
@@ -1808,10 +1895,10 @@
           {/* Footer */}
           <footer className="border-t border-slate-800 bg-navy-950 py-6 px-4 text-center text-xs text-slate-500">
             <p>
-              삼성전자 성과급(OPI 1 + OPI 2) 5개년 시뮬레이터 | 2026년 5월 성과급 제도 개편안 기준
+              삼성전자 성과급(OPI 1 + OPI 2 + PSU) 5개년 시뮬레이터 | 2026년 5월 성과급 제도 개편안 기준
             </p>
             <p className="mt-1 text-[11px] text-slate-600">
-              OPI 1 근로소득 누진세율 원천징수 및 OPI 2 세금(54.467%) 주식 수 선공제 후 45.533% 세후 주식 입고 기준
+              OPI 2 세금(54.467%) 주식 수 선공제 후 45.533% 입고 (즉시 1/3 · 1년후 1/3 · 2년후 1/3 매도제한 독소조항 반영) | PSU CL2 400주 / CL3·4 600주 1/3씩 분할 수령
             </p>
           </footer>
 
