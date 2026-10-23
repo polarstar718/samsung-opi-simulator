@@ -201,33 +201,28 @@
     }
 
     // ==========================================
-    // 기본 시나리오 프리셋 정의
+    // 최신 증권가 컨센서스 및 리포트 기반 시나리오 프리셋 정의 (2026년 370조 기준)
     // ==========================================
     const SCENARIOS = {
       default: {
-        name: '기본 시나리오 (85~150조)',
-        description: '27년 100조 이하 조정 후 28년부터 100조 돌파 지속 성장',
-        profits: { 2027: 85, 2028: 115, 2029: 130, 2030: 140, 2031: 150 }
+        name: '📊 증권가 컨센서스 기본 (480~550조)',
+        description: '26년(올해) 370조 돌파 후, HBM4 양산 및 빅테크 5년 장기공급계약(LTA)으로 27년 550조·28년 500조대 이익 체력 유지 (FnGuide 컨센서스 기반)',
+        profits: { 2027: 550, 2028: 500, 2029: 480, 2030: 520, 2031: 550 }
       },
       supercycle: {
-        name: '🔥 슈퍼사이클 (105~180조)',
-        description: 'AI 반도체 HBM 폭발적 수요로 5개년 전 기간 100조 초과 달성',
-        profits: { 2027: 105, 2028: 125, 2029: 145, 2030: 165, 2031: 180 }
+        name: '🔥 긍정론: AI 슈퍼사이클 (570~850조)',
+        description: '현대차·삼성증권 등 긍정론: 에이전틱 AI 확산 및 데이터센터 증설 병목 지속으로 27년 570조 → 28년 610조 돌파 후 지속 우상향',
+        profits: { 2027: 570, 2028: 610, 2029: 680, 2030: 750, 2031: 850 }
       },
       conservative: {
-        name: '🛡️ 보수적 시나리오 (70~115조)',
-        description: '반도체 다운턴 및 경쟁 심화로 2030년 이후에야 100조 돌파',
-        profits: { 2027: 70, 2028: 85, 2029: 95, 2030: 105, 2031: 115 }
+        name: '🛡️ 신중론: 피크아웃 조정 (280~540조)',
+        description: 'BNK·NH투자증권 등 신중론: 27년 540조 정점 통과 후 메모리 증설 물량 유입 및 수급 완화로 완만한 감익 조정 후 반등',
+        profits: { 2027: 540, 2028: 420, 2029: 320, 2030: 280, 2031: 350 }
       },
-      boom: {
-        name: '⚡ 초호황 시나리오 (120~200조)',
-        description: '메모리 독점적 호황으로 사상 최대 영업이익 지속 경신',
-        profits: { 2027: 120, 2028: 140, 2029: 160, 2030: 180, 2031: 200 }
-      },
-      megacycle: {
-        name: '🌌 메가사이클 (300~1,000조)',
-        description: '글로벌 AI 인프라 독점으로 영업이익 최대 1,000조 원 도달 시나리오',
-        profits: { 2027: 300, 2028: 450, 2029: 600, 2030: 800, 2031: 1000 }
+      downturn: {
+        name: '⚠️ 다운턴: 100조 허들 테스트 (95~370조)',
+        description: '글로벌 AI 인프라 투자 급감 가정 시 29년 일시적 100조 이하(95조, OPI 2 미발동) 하락 구간을 점검하는 스트레스 테스트',
+        profits: { 2027: 370, 2028: 180, 2029: 95, 2030: 150, 2031: 250 }
       }
     };
 
@@ -695,14 +690,17 @@
             <section className="bg-navy-800/90 border-2 border-blue-500/40 rounded-2xl p-5 shadow-2xl backdrop-blur space-y-4">
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-3 border-b border-slate-700/80">
                 <div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <span className="px-2 py-0.5 bg-samsung text-white text-[11px] font-bold rounded">STEP 1</span>
                     <h2 className="font-bold text-white text-base sm:text-lg flex items-center gap-1.5">
                       <span>📊</span> 2027~2031년(5개년) 연도별 예상 영업이익 조절 (단위: 조 원)
                     </h2>
+                    <span className="text-[11px] px-2.5 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/50 text-amber-300 font-semibold">
+                      📌 2026년 올해 컨센서스: 약 370조 원 (3Q 잠정 107조 돌파)
+                    </span>
                   </div>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    상단 슬라이더나 숫자 입력창으로 연도별 영업이익을 조절하면 아래 전 사업부 수령액이 즉시 재계산됩니다 (100조 원 초과 시 OPI 2 주식 지급 발동)
+                  <p className="text-xs text-slate-400 mt-1">
+                    최신 증권가 컨센서스(26년 370조 → 27년 540~570조 → 28년 500~610조)가 반영되어 있습니다. 슬라이더나 입력창으로 자유롭게 미세조정하세요.
                   </p>
                 </div>
 
@@ -726,6 +724,17 @@
                     );
                   })}
                 </div>
+              </div>
+
+              {/* Selected Scenario Description Banner */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-navy-900/80 border border-slate-700/80 rounded-xl px-3.5 py-2 text-xs">
+                <div className="flex items-center gap-2 text-blue-200">
+                  <span className="font-bold text-blue-400 whitespace-nowrap">💡 현재 선택된 전망 근거:</span>
+                  <span>{SCENARIOS[selectedScenarioKey]?.description}</span>
+                </div>
+                <span className="text-[11px] text-slate-400 whitespace-nowrap">
+                  5개년 합계 영업이익: <strong className="text-white">{Object.values(opProfits).reduce((a, b) => a + b, 0).toLocaleString()}조 원</strong>
+                </span>
               </div>
 
               {/* 5-Year Sliders Grid */}
