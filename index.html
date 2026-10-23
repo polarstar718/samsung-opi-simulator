@@ -241,7 +241,8 @@
         common: 22500,
         nonMemory: 22500
       });
-      const [baseSalaryManwon, setBaseSalaryManwon] = useState(10000); // 10,000만 원 (1억 원)
+      const [baseSalaryManwon, setBaseSalaryManwon] = useState(10000); // 2027년 시작 계약연봉: 기본 10,000만 원 (1억 원, 최대 1.2억 샐러리캡)
+      const [salaryGrowthRate, setSalaryGrowthRate] = useState(5); // 연간 연봉 상승률 (기본 연 5%)
       const [stockPrice, setStockPrice] = useState(80000); // 삼성전자 주가 (기본 80,000원)
 
       // 5개년 연도별 영업이익 (조 원)
@@ -271,8 +272,9 @@
         showToast(`'${SCENARIOS[key].name}' 프리셋이 적용되었습니다.`);
       };
 
-      const baseSalaryWon = baseSalaryManwon * 10000;
-      const opi1CapWon = baseSalaryWon * 0.5; // OPI 1 개인별 최대 한도 (연봉 50%)
+      const SALARY_CAP_WON = 120000000; // 1.2억 원 (12,000만 원) 샐러리캡
+      const baseSalaryWon = Math.min(SALARY_CAP_WON, baseSalaryManwon * 10000);
+      const opi1CapWon = baseSalaryWon * 0.5; // 2027년 시작 기준 OPI 1 개인별 최대 한도 (연봉 50%)
 
       // ==========================================
       // 핵심 연산: 5개년 연도별 & 사업부별 시뮬레이션 계산
@@ -287,11 +289,17 @@
 
         const resultsByYear = {};
 
-        years.forEach(year => {
+        years.forEach((year, yearIdx) => {
           const opTrillion = opProfits[year] || 0;
           const opWon = opTrillion * 1000000000000; // 조 -> 원
           const totalPoolWon = opWon * 0.105; // 10.5% 전체 재원
           const isHurdleMet = opTrillion > 100; // OPI 2 발동 조건: 100조 초과
+
+          // 연도별 계약연봉 계산 (매년 salaryGrowthRate% 복리 상승, 최대 1.2억 원 샐러리캡 적용)
+          const rawYearSalaryWon = baseSalaryWon * Math.pow(1 + (salaryGrowthRate / 100), yearIdx);
+          const yearSalaryWon = Math.min(SALARY_CAP_WON, Math.round(rawYearSalaryWon));
+          const yearOpi1CapWon = yearSalaryWon * 0.5; // 해당 연도 OPI 1 최대 한도 (최대 6,000만 원)
+          const isSalaryCapped = yearSalaryWon >= SALARY_CAP_WON;
 
           // 1. 배분 모드에 따른 사업부별 1인당 Gross 배정액 산출 [메모리 100% : 공통 70% : 비메모리 40%]
           let grossAllocation = {};
@@ -325,9 +333,9 @@
           divisions.forEach(div => {
             const gross = grossAllocation[div.key] || 0;
 
-            // OPI 1 (현금): 연봉의 50% Cap 적용
-            const opi1Gross = Math.min(gross, opi1CapWon);
-            const opi1TaxInfo = calcOPI1Tax(baseSalaryWon, opi1Gross);
+            // OPI 1 (현금): 해당 연도 계약연봉의 50% Cap 적용
+            const opi1Gross = Math.min(gross, yearOpi1CapWon);
+            const opi1TaxInfo = calcOPI1Tax(yearSalaryWon, opi1Gross);
 
             // OPI 2 (주식):
             let opi2Gross = 0;
@@ -365,6 +373,9 @@
 
             divResults[div.key] = {
               divisionName: div.name,
+              yearSalaryWon,
+              yearOpi1CapWon,
+              isSalaryCapped,
               grossTotal: gross,
               opi1Gross,
               opi1Tax: opi1TaxInfo.totalTax,
@@ -393,6 +404,9 @@
             opWon,
             totalPoolWon,
             isHurdleMet,
+            yearSalaryWon,
+            yearOpi1CapWon,
+            isSalaryCapped,
             divisions: divResults
           };
         });
@@ -468,12 +482,12 @@
           resultsByYear,
           cumulativeByDivision
         };
-      }, [headcounts, baseSalaryWon, stockPrice, opProfits, allocationMode, opi2Mode, opi1CapWon]);
+      }, [headcounts, baseSalaryWon, salaryGrowthRate, stockPrice, opProfits, allocationMode, opi2Mode, opi1CapWon]);
 
       // CSV 데이터 다운로드 핸들러
       const handleExportCSV = () => {
         let csv = '\uFEFF'; // Excel UTF-8 BOM
-        csv += '연도,영업이익(조원),사업부,총배정액(원),OPI1_세전(원),OPI1_세금(원),OPI1_세후현금(원),OPI2_세전주식(원),OPI2_세금차감액(54.467%)(원),OPI2_세후입고주식가치(45.533%)(원),세전배정주식수(주),세금차감주식수(주),실제입고주식수(주),세후주식1/3매도현금화(원),1/3매도주식수(주),통장최종수령현금(OPI1세후+1/3매도)(원),2/3보유주식가치(원),2/3보유주식수(주)\n';
+        csv += '연도,영업이익(조원),적용계약연봉(원),OPI1_한도Cap(원),사업부,총배정액(원),OPI1_세전(원),OPI1_세금(원),OPI1_세후현금(원),OPI2_세전주식(원),OPI2_세금차감액(54.467%)(원),OPI2_세후입고주식가치(45.533%)(원),세전배정주식수(주),세금차감주식수(주),실제입고주식수(주),세후주식1/3매도현금화(원),1/3매도주식수(주),통장최종수령현금(OPI1세후+1/3매도)(원),2/3보유주식가치(원),2/3보유주식수(주)\n';
 
         simulationData.years.forEach(yr => {
           const yrData = simulationData.resultsByYear[yr];
@@ -482,6 +496,8 @@
             csv += [
               yr,
               yrData.opTrillion,
+              Math.round(yrData.yearSalaryWon),
+              Math.round(yrData.yearOpi1CapWon),
               d.divisionName,
               Math.round(d.grossTotal),
               Math.round(d.opi1Gross),
@@ -521,7 +537,7 @@
 
         const text = `[삼성전자 2027~2031 성과급 5개년 시뮬레이션 결과 요약]
 - 적용 시나리오: ${SCENARIOS[selectedScenarioKey]?.name} (영업이익: 27년 ${opProfits[2027]}조, 28년 ${opProfits[2028]}조, 29년 ${opProfits[2029]}조, 30년 ${opProfits[2030]}조, 31년 ${opProfits[2031]}조)
-- 기준 연봉: ${formatKoreanWon(baseSalaryWon)} (OPI 1 Cap: ${formatKoreanWon(opi1CapWon)})
+- 2027년 시작 연봉: ${formatKoreanWon(baseSalaryWon)} (연 ${salaryGrowthRate}% 상승, 1.2억 원 샐러리캡 적용 → 2031년 ${formatKoreanWon(simulationData.resultsByYear[2031].yearSalaryWon)})
 - 삼성전자 주가: ${formatNumber(stockPrice)}원 (OPI 2 세금 54.467% 주식 선차감 후 세후 45.533% 입고 기준)
 
 [1. 메모리사업부 (인원: ${formatNumber(headcounts.memory)}명)]
@@ -788,7 +804,7 @@
                     <span>🏆</span> 5개년 누적 총 수령액 사업부별 비교 (2027 ~ 2031)
                   </h2>
                   <p className="text-xs text-slate-400">
-                    계약연봉 {formatKoreanWon(baseSalaryWon)} 기준 | OPI 2 세금(54.467%)만큼 주식수 선공제 후 입고된 세후 주식(45.533%) 중 1/3 현금화 & 2/3 보유
+                    27년 시작연봉 {formatKoreanWon(baseSalaryWon)} (연 +{salaryGrowthRate}% 상승, 1.2억 샐러리캡 적용 → 31년 {formatKoreanWon(simulationData.resultsByYear[2031].yearSalaryWon)}) 기준
                   </p>
                 </div>
 
@@ -914,36 +930,92 @@
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 
-                {/* 1. 계약연봉 & 삼성전자 주가 */}
-                <div className="space-y-4 bg-navy-900/50 p-4 rounded-xl border border-slate-700/70">
-                  <h4 className="text-xs font-bold text-blue-400 uppercase tracking-wider">
-                    1. 개인 연봉 및 기준 주가 설정
-                  </h4>
+                {/* 1. 계약연봉(샐러리캡 1.2억) & 연봉상승률 & 삼성전자 주가 */}
+                <div className="space-y-3.5 bg-navy-900/50 p-4 rounded-xl border border-slate-700/70">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-bold text-blue-400 uppercase tracking-wider">
+                      1. 개인 연봉(샐러리캡 1.2억) 및 주가 설정
+                    </h4>
+                    <span className="text-[10px] px-2 py-0.5 rounded bg-blue-950/80 text-blue-300 border border-blue-700/50 font-semibold">
+                      Max 1.2억 Cap
+                    </span>
+                  </div>
 
-                  {/* 계약연봉 슬라이더 */}
+                  {/* 2027년 시작 계약연봉 슬라이더 (5,000만 ~ 1.2억 원) */}
                   <div>
                     <div className="flex justify-between items-center mb-1 text-xs">
-                      <span className="text-slate-300 font-semibold">나의 계약연봉</span>
+                      <span className="text-slate-300 font-semibold">2027년 시작 계약연봉</span>
                       <span className="font-bold text-blue-400 text-sm">{formatKoreanWon(baseSalaryWon)}</span>
                     </div>
                     <input
                       type="range"
                       min="5000"
-                      max="30000"
-                      step="500"
+                      max="12000"
+                      step="100"
                       value={baseSalaryManwon}
-                      onChange={(e) => setBaseSalaryManwon(Number(e.target.value))}
+                      onChange={(e) => setBaseSalaryManwon(Math.min(12000, Math.max(5000, Number(e.target.value))))}
                       className="w-full accent-samsung cursor-pointer"
                     />
-                    <div className="flex justify-between text-[11px] text-slate-400 mt-1">
+                    <div className="flex justify-between text-[11px] text-slate-400 mt-0.5">
                       <span>5,000만 원</span>
-                      <span className="text-emerald-400 font-medium">OPI 1 Cap(50%): {formatKoreanWon(opi1CapWon)}</span>
-                      <span>3억 원</span>
+                      <span className="text-emerald-400 font-medium">27년 OPI 1 한도: {formatKoreanWon(opi1CapWon)}</span>
+                      <span>1억 2,000만 원(Cap)</span>
+                    </div>
+                  </div>
+
+                  {/* 연간 연봉 상승률 슬라이더 (기본 5%) */}
+                  <div className="pt-2 border-t border-slate-800/80">
+                    <div className="flex justify-between items-center mb-1 text-xs">
+                      <span className="text-slate-300 font-semibold">연간 연봉 상승률 (매년 복리)</span>
+                      <span className="font-bold text-emerald-400 text-sm">연 +{salaryGrowthRate}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="15"
+                      step="0.5"
+                      value={salaryGrowthRate}
+                      onChange={(e) => setSalaryGrowthRate(Number(e.target.value))}
+                      className="w-full accent-emerald-500 cursor-pointer"
+                    />
+                    <div className="flex justify-between text-[10px] text-slate-400 mt-0.5">
+                      <span>0% (동결)</span>
+                      <span className="text-slate-300">기본 5.0%/년 (최대 1.2억 샐러리캡 제한)</span>
+                      <span>15%</span>
+                    </div>
+
+                    {/* 5개년 연도별 적용 연봉 & OPI 1 Cap 미니 프리뷰 */}
+                    <div className="mt-2 bg-navy-950/70 border border-slate-800 rounded-lg p-2">
+                      <div className="text-[10px] text-slate-400 mb-1 flex justify-between">
+                        <span>연도별 적용 연봉 (OPI 1 50% 한도)</span>
+                        <span className="text-amber-400 font-semibold">1.2억 도달 시 Cap 고정</span>
+                      </div>
+                      <div className="grid grid-cols-5 gap-1 text-center">
+                        {simulationData.years.map(yr => {
+                          const yInfo = simulationData.resultsByYear[yr];
+                          return (
+                            <div
+                              key={yr}
+                              className={`p-1 rounded border text-[10px] ${
+                                yInfo.isSalaryCapped
+                                  ? 'bg-amber-950/30 border-amber-700/50 text-amber-300'
+                                  : 'bg-navy-900/60 border-slate-800 text-slate-300'
+                              }`}
+                            >
+                              <div className="font-bold text-[9px] text-slate-400">{String(yr).slice(2)}년</div>
+                              <div className="font-extrabold truncate">{(yInfo.yearSalaryWon / 100000000).toFixed(2)}억</div>
+                              <div className="text-[8px] text-emerald-400">
+                                Cap {Math.round(yInfo.yearOpi1CapWon / 10000).toLocaleString()}만
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                   </div>
 
                   {/* 삼성전자 주가 */}
-                  <div>
+                  <div className="pt-2 border-t border-slate-800/80">
                     <div className="flex justify-between items-center mb-1 text-xs">
                       <span className="text-slate-300 font-semibold">삼성전자 기준 주가</span>
                       <span className="font-bold text-amber-400 text-sm">{formatNumber(stockPrice)} 원</span>
@@ -957,7 +1029,7 @@
                       onChange={(e) => setStockPrice(Number(e.target.value))}
                       className="w-full accent-amber-500 cursor-pointer"
                     />
-                    <div className="flex justify-between text-[11px] text-slate-400 mt-1">
+                    <div className="flex justify-between text-[11px] text-slate-400 mt-0.5">
                       <span>50,000원</span>
                       <span>기본 80,000원</span>
                       <span>150,000원</span>
@@ -1351,12 +1423,20 @@
                             className="hover:bg-navy-700/50 transition"
                           >
                             <td className="p-3 font-bold text-white">
-                              {yr}년
-                              {yrData.isHurdleMet ? (
-                                <span className="ml-1 text-[9px] text-orange-400 font-bold">🔥 100조↑</span>
-                              ) : (
-                                <span className="ml-1 text-[9px] text-slate-500">100조↓</span>
-                              )}
+                              <div>
+                                {yr}년
+                                {yrData.isHurdleMet ? (
+                                  <span className="ml-1 text-[9px] text-orange-400 font-bold">🔥 100조↑</span>
+                                ) : (
+                                  <span className="ml-1 text-[9px] text-slate-500">100조↓</span>
+                                )}
+                              </div>
+                              <div className="text-[10px] text-slate-400 font-normal mt-0.5">
+                                연봉 {formatKoreanWon(d.yearSalaryWon)}
+                                {d.isSalaryCapped && (
+                                  <span className="ml-1 text-[9px] text-amber-400 font-semibold">(1.2억Cap)</span>
+                                )}
+                              </div>
                             </td>
                             <td className="p-3 text-slate-300">{yrData.opTrillion}조 원</td>
                             {selectedDivisionTab === 'all' && (
@@ -1371,7 +1451,9 @@
                             <td className="p-3 font-bold text-white">{formatKoreanWon(d.grossTotal)}</td>
                             <td className="p-3">
                               <span className="text-emerald-400 font-semibold block">{formatKoreanWon(d.opi1NetCash)}</span>
-                              <span className="text-[10px] text-slate-400">세전 {formatKoreanWon(d.opi1Gross)}</span>
+                              <span className="text-[10px] text-slate-400">
+                                세전 {formatKoreanWon(d.opi1Gross)} (한도 {formatKoreanWon(d.yearOpi1CapWon)})
+                              </span>
                             </td>
                             <td className="p-3">
                               <span className="text-amber-400 font-semibold block">
